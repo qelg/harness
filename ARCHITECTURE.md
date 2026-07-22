@@ -17,12 +17,15 @@ Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung is
 | --- | --- | --- |
 | App Factory | `llm_harness/api.py` | Composition Root: EventBus und Registry erzeugen, Plugins installieren. |
 | Core API Plugin | `llm_harness/api_plugin.py` | HTTP-Endpunkte, SSE-Streaming vom Event-Bus und Schreiben von User-/Tool-Requests. |
+| Web Frontend | `frontend/` | Kleine statische HTML/CSS/JS-Oberflaeche fuer Sessions und Messages. |
 | Core Event Types | `llm_harness/core/types.py` | Zentrale Core-Eventnamen, Tagtypen, Pflicht-Tags und neue `sess_...` Session-IDs. |
 | Event Consumer Base | `llm_harness/core/consumer.py` | Gemeinsame Replay-/Subscribe-/Ack-Logik fuer Event-Consumer-Plugins. |
 | Plugin Registry | `llm_harness/plugins.py` | Registrierung und Lookup von LLM-Providern, Tools, API-Plugins und Event-Consumern. |
 | Eventing Engine | `llm_harness/core/events.py` | Eigene SQLite-Event-DB, monotone Event-IDs, Batch-Append, Tags, Replay und Fan-out. |
 | Plugin Protokolle | `llm_harness/protocols.py` | Minimale Python-Interfaces fuer Provider, Tools, API-Plugins und Event-Consumer. |
 | Builtins | `llm_harness/builtin.py` | Registrierung der eingebauten OpenAI-kompatiblen Provider und des Podman-Tools. |
+| LLM Run Requester | `llm_harness/builtin_plugins/llm_run_requester.py` | Erzeugt `llm.run.requested` aus `chat.message.user.created`. |
+| LLM Provider Runner | `llm_harness/builtin_plugins/llm_provider_runner.py` | Fuehrt `llm.run.requested` gegen registrierte Provider aus und streamt `llm.delta`. |
 | OpenAI-kompatibler Provider | `llm_harness/providers/openai_compatible.py` | Streaming gegen `/chat/completions` kompatible APIs. |
 | Mock LLM Provider | `llm_harness/providers/mock.py` | Deterministischer Streaming-Provider fuer Tests ohne LLM-Kosten. |
 | Podman Tool | `llm_harness/tools/podman_shell.py` | Shell-Ausfuehrung in session- oder tag-gebundenen Podman-Containern. |

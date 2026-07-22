@@ -4,11 +4,11 @@ from llm_harness.api_plugin import HarnessApiPlugin
 from llm_harness.config import Settings
 from llm_harness.auth_plugins.chatgpt_oauth import ChatGPTOAuthPlugin
 from llm_harness.auth_plugins.openai_codex_device import OpenAICodexDeviceAuthPlugin
+from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
+from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
 from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
 from llm_harness.tools.podman_shell import PodmanShellTool
-from plugins.llm_provider_runner import LlmProviderRunnerPlugin
-from plugins.llm_run_requester import LlmRunRequesterPlugin
 
 
 def register(registry) -> None:

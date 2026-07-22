@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import LlmRunRequested, Message, SessionCreated, ToolMessageCreated, UserMessageCreated
 from llm_harness.plugins import Registry
-from plugins.llm_provider_runner import LlmProviderRunnerPlugin
+from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 
 
 class CapturingProvider:

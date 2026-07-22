@@ -5,7 +5,7 @@ import asyncio
 from llm_harness.config import Settings
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import ModelSelected, SessionCreated, UserMessageCreated
-from plugins.llm_run_requester import LlmRunRequesterPlugin
+from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
 
 
 def test_user_message_requests_llm_run_with_global_model_selection(tmp_path, monkeypatch):

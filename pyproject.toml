@@ -24,7 +24,8 @@ dev = [
 llm-harness = "llm_harness.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["llm_harness", "plugins"]
+packages = ["llm_harness"]
+force-include = { "frontend" = "frontend" }
 
 [project.entry-points."llm_harness.plugins"]
 builtin = "llm_harness.builtin:register"

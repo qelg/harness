@@ -25,6 +25,16 @@ def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatc
     assert restarted_response.json() == [session]
 
 
+def test_api_serves_frontend(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.get("/frontend/")
+
+    assert response.status_code == 200
+    assert "LLM Harness" in response.text
+
+
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())

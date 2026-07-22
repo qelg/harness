@@ -24,6 +24,7 @@ uvicorn llm_harness.api:create_app --factory --reload
 ```
 
 Die Eventing Engine nutzt standardmaessig eine SQLite-Datei unter `.harness/events.db`.
+Das kleine Web-Frontend ist unter `http://127.0.0.1:8000/frontend/` verfuegbar.
 
 ## Beispiel
 

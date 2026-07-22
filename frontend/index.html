@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LLM Harness</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sessions">
+        <header class="panel-header">
+          <div>
+            <h1>Harness</h1>
+            <p>Sessions</p>
+          </div>
+          <button id="refreshSessions" type="button" title="Refresh sessions">Refresh</button>
+        </header>
+
+        <form id="createSessionForm" class="create-session">
+          <input id="sessionTitle" name="title" placeholder="New session title" autocomplete="off" />
+          <input id="sessionTags" name="tags" placeholder="tags, comma separated" autocomplete="off" />
+          <button type="submit">Create</button>
+        </form>
+
+        <div id="sessionsList" class="sessions-list" aria-live="polite"></div>
+      </aside>
+
+      <section class="chat">
+        <header class="chat-header">
+          <div>
+            <h2 id="chatTitle">Select a session</h2>
+            <p id="chatMeta">No session selected</p>
+          </div>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <form id="messageForm" class="message-form">
+          <textarea id="messageContent" rows="3" placeholder="Write a message" disabled></textarea>
+          <button id="sendMessage" type="submit" disabled>Send</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
