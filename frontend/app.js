@@ -470,7 +470,82 @@ function formatMessageContent(content) {
   if (typeof content === "string") {
     return content;
   }
+  const outputText = formatProviderOutput(content);
+  if (outputText) {
+    return outputText;
+  }
   return JSON.stringify(content, null, 2);
+}
+
+function formatProviderOutput(content) {
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  return content
+    .map((item) => formatProviderOutputItem(item))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function formatProviderOutputItem(item) {
+  if (!item || typeof item !== "object") {
+    return String(item ?? "");
+  }
+  if (item.type === "message") {
+    return formatProviderContentParts(item.content);
+  }
+  if (item.type === "function_call") {
+    const args = item.arguments ? `\n${formatJsonish(item.arguments)}` : "";
+    return `Tool call: ${item.name || item.call_id || "function"}${args}`;
+  }
+  if (item.type === "reasoning") {
+    return `Reasoning:\n${formatProviderContentParts(item.content || item.summary || item.text || item)}`;
+  }
+  if (item.content !== undefined) {
+    return formatProviderContentParts(item.content);
+  }
+  if (item.text) {
+    return item.text;
+  }
+  return formatJsonish(item);
+}
+
+function formatProviderContentParts(parts) {
+  if (typeof parts === "string") {
+    return parts;
+  }
+  if (!Array.isArray(parts)) {
+    return formatJsonish(parts);
+  }
+  return parts
+    .map((part) => {
+      if (!part || typeof part !== "object") {
+        return String(part ?? "");
+      }
+      if (part.type === "output_text" || part.type === "input_text" || part.type === "summary_text") {
+        return part.text || "";
+      }
+      if (part.type === "refusal") {
+        return `Refusal: ${part.refusal || part.text || ""}`;
+      }
+      if (part.type === "reasoning_text" || part.type === "reasoning.text") {
+        return part.text || "";
+      }
+      return formatJsonish(part);
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function formatJsonish(value) {
+  if (typeof value === "string") {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  return JSON.stringify(value, null, 2);
 }
 
 function renderEmptyChat() {
