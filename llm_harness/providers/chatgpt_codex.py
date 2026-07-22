@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import AsyncIterator, Sequence
 
@@ -11,6 +12,7 @@ from llm_harness.config import Settings
 from llm_harness.core.types import Message, ToolSpec
 
 DEFAULT_CODEX_INSTRUCTIONS = "You are a helpful coding assistant."
+logger = logging.getLogger(__name__)
 
 
 class ChatGPTCodexProvider:
@@ -38,6 +40,13 @@ class ChatGPTCodexProvider:
         }
         if tools:
             payload["tools"] = [_responses_tool(tool) for tool in tools]
+        if self.settings.log_provider_events:
+            logger.info(
+                "chatgpt-codex request model=%s messages=%d tools=%s",
+                model,
+                len(messages),
+                [tool.name for tool in tools],
+            )
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -59,7 +68,10 @@ class ChatGPTCodexProvider:
                     data = line.removeprefix("data: ").strip()
                     if data == "[DONE]":
                         break
-                    content = _content_from_event(json.loads(data))
+                    event = json.loads(data)
+                    if self.settings.log_provider_events:
+                        logger.info("chatgpt-codex event %s", json.dumps(event, sort_keys=True))
+                    content = _content_from_event(event)
                     if content:
                         yield content
 

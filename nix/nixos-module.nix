@@ -59,6 +59,12 @@ in
       description = "Toolsets selected when no session-specific selection event overrides them.";
     };
 
+    logProviderEvents = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Log raw streaming provider events for debugging missing model output such as tool calls.";
+    };
+
     chatgptOAuth = {
       authorizationUrl = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -240,6 +246,7 @@ in
           HARNESS_OPENAI_BASE_URL = cfg.openaiBaseUrl;
           HARNESS_OPENROUTER_BASE_URL = cfg.openrouterBaseUrl;
           HARNESS_DEFAULT_TOOLSETS = lib.concatStringsSep "," cfg.defaultToolsets;
+          HARNESS_LOG_PROVIDER_EVENTS = if cfg.logProviderEvents then "1" else "0";
           HARNESS_PODMAN_IMAGE = cfg.podmanImage;
           HARNESS_PODMAN_MOUNT_NIX_STORE = if cfg.podmanMountNixStore then "1" else "0";
           HARNESS_TAG_CONTAINER_MAP = tagContainerMapValue;

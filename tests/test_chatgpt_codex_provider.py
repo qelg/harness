@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -24,8 +25,9 @@ def test_chatgpt_codex_provider_requires_login_token(tmp_path, monkeypatch):
         asyncio.run(consume())
 
 
-def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch):
+def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    monkeypatch.setenv("HARNESS_LOG_PROVIDER_EVENTS", "1")
     app = create_app()
     conn = app.state.bus.conn
     ensure_oauth_schema(conn)
@@ -88,7 +90,10 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch):
         tool = ToolSpec(name="echo", description="Echo text.", input_schema={"type": "object"})
         return [delta async for delta in provider.stream_chat(model="codex", messages=[message], tools=[tool])]
 
-    assert asyncio.run(consume()) == ["hi"]
+    with caplog.at_level(logging.INFO, logger="llm_harness.providers.chatgpt_codex"):
+        assert asyncio.run(consume()) == ["hi"]
+    assert "chatgpt-codex event" in caplog.text
+    assert "response.output_text.delta" in caplog.text
 
 
 def test_chatgpt_codex_provider_includes_error_response_body(tmp_path, monkeypatch):

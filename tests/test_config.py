@@ -20,3 +20,9 @@ def test_settings_reads_default_toolsets(monkeypatch):
     monkeypatch.setenv("HARNESS_DEFAULT_TOOLSETS", "default, readonly")
 
     assert Settings.from_env().default_toolsets == ("default", "readonly")
+
+
+def test_settings_reads_provider_event_logging_flag(monkeypatch):
+    monkeypatch.setenv("HARNESS_LOG_PROVIDER_EVENTS", "1")
+
+    assert Settings.from_env().log_provider_events is True

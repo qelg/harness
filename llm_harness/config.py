@@ -32,6 +32,7 @@ class Settings:
     default_provider: str
     default_model: str
     default_toolsets: tuple[str, ...]
+    log_provider_events: bool
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -61,6 +62,7 @@ class Settings:
             default_provider=os.getenv("HARNESS_DEFAULT_PROVIDER", "mock-llm"),
             default_model=os.getenv("HARNESS_DEFAULT_MODEL", "test-model"),
             default_toolsets=parse_csv(os.getenv("HARNESS_DEFAULT_TOOLSETS", "default")),
+            log_provider_events=parse_bool(os.getenv("HARNESS_LOG_PROVIDER_EVENTS", "0")),
         )
 
 

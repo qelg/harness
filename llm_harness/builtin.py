@@ -21,6 +21,7 @@ def register(registry, *, bus=None) -> None:
             name="openai-codex",
             base_url=settings.openai_base_url,
             api_key=settings.openai_api_key,
+            log_provider_events=settings.log_provider_events,
         )
     )
     if bus is not None:
@@ -31,6 +32,7 @@ def register(registry, *, bus=None) -> None:
             base_url=settings.openrouter_base_url,
             api_key=settings.openrouter_api_key,
             extra_headers={"HTTP-Referer": "http://localhost", "X-Title": "LLM Harness"},
+            log_provider_events=settings.log_provider_events,
         )
     )
     registry.add_provider(MockLLMProvider(response=settings.mock_llm_response))
