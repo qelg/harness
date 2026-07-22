@@ -77,6 +77,13 @@ def test_api_lists_builtin_toolsets(tmp_path, monkeypatch):
     assert response.json()["toolsets"] == ["default"]
 
 
+def test_api_registers_builtin_tool_call_requester(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+
+    assert "tool-call-requester" in {plugin.name for plugin in app.state.registry.event_consumer_plugins}
+
+
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())

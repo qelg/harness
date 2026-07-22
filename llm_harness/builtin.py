@@ -6,6 +6,7 @@ from llm_harness.auth_plugins.chatgpt_oauth import ChatGPTOAuthPlugin
 from llm_harness.auth_plugins.openai_codex_device import OpenAICodexDeviceAuthPlugin
 from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
+from llm_harness.builtin_plugins.tool_call_requester import ToolCallRequesterPlugin
 from llm_harness.providers.chatgpt_codex import ChatGPTCodexProvider
 from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
@@ -42,3 +43,4 @@ def register(registry, *, bus=None) -> None:
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
     registry.add_event_consumer_plugin(LlmRunRequesterPlugin(settings=settings))
     registry.add_event_consumer_plugin(LlmProviderRunnerPlugin())
+    registry.add_event_consumer_plugin(ToolCallRequesterPlugin())
