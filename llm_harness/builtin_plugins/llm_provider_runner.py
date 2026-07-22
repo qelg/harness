@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -181,9 +180,9 @@ def _message_from_event(event: EventRecord) -> Message:
     )
 
 
-def _assistant_content(content_parts: list[str], provider_response: dict[str, Any] | None) -> str:
+def _assistant_content(content_parts: list[str], provider_response: dict[str, Any] | None) -> Any:
     if provider_response and provider_response.get("output") is not None:
-        return json.dumps(provider_response["output"], ensure_ascii=False, indent=2)
+        return provider_response["output"]
     return "".join(content_parts)
 
 

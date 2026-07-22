@@ -164,9 +164,10 @@ class _ChatCompletionAccumulator:
         for key in ("content", "reasoning", "reasoning_content", "refusal"):
             if delta.get(key):
                 message[key] = message.get(key, "") + delta[key]
-        for key in ("reasoning_details", "annotations"):
-            if delta.get(key):
-                message.setdefault(key, []).extend(delta[key])
+        if delta.get("reasoning_details"):
+            _merge_reasoning_details(message.setdefault("reasoning_details", []), delta["reasoning_details"])
+        if delta.get("annotations"):
+            message.setdefault("annotations", []).extend(delta["annotations"])
         if delta.get("audio"):
             message["audio"] = delta["audio"]
         _merge_tool_calls(message.setdefault("tool_calls", []), delta.get("tool_calls") or [])
@@ -198,3 +199,19 @@ def _clean_message(message: dict) -> dict:
     if cleaned.get("tool_calls") == []:
         cleaned.pop("tool_calls")
     return cleaned
+
+
+def _merge_reasoning_details(target: list[dict], deltas: list[dict]) -> None:
+    for delta in deltas:
+        index = delta.get("index")
+        if not isinstance(index, int):
+            target.append(dict(delta))
+            continue
+        while len(target) <= index:
+            target.append({})
+        current = target[index]
+        for key, value in delta.items():
+            if key == "text" and isinstance(value, str):
+                current["text"] = current.get("text", "") + value
+            else:
+                current[key] = value

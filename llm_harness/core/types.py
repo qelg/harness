@@ -29,7 +29,7 @@ class Message:
     id: int
     session_id: str
     role: Role
-    content: str
+    content: Any
     provider: str | None = None
     model: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -117,7 +117,7 @@ class UserMessageCreated:
 @dataclass(frozen=True)
 class AssistantMessageCreated:
     session_id: str
-    content: str
+    content: Any
     provider: str
     model: str
     run_id: str

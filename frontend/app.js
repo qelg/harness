@@ -454,13 +454,23 @@ function failedRunMessage(event) {
 
 function messageHtml(message) {
   const role = escapeHtml(message.role || "event");
-  const content = escapeHtml(message.content || "");
+  const content = escapeHtml(formatMessageContent(message.content));
   return `
     <article class="message ${role}" data-message-id="${escapeHtml(message.id)}">
       <div class="message-role">${role}</div>
       <div class="message-content">${content}</div>
     </article>
   `;
+}
+
+function formatMessageContent(content) {
+  if (content === null || content === undefined) {
+    return "";
+  }
+  if (typeof content === "string") {
+    return content;
+  }
+  return JSON.stringify(content, null, 2);
 }
 
 function renderEmptyChat() {

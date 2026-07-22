@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
+    AssistantMessageCreated,
     LlmRunRequested,
     Message,
     ProviderStreamEvent,
@@ -135,10 +136,48 @@ async def _assert_llm_provider_runner_persists_full_provider_response(tmp_path):
 
     assistant = bus.replay(EventFilter(names=frozenset({"chat.message.assistant.created"}), tags={"run": "llm_1"}))
     assert len(assistant) == 1
-    assert '"type": "function_call"' in assistant[0].payload["content"]
-    assert '"name": "echo"' in assistant[0].payload["content"]
+    assert assistant[0].payload["content"] == [
+        {"type": "function_call", "name": "echo", "arguments": "{\"text\":\"hi\"}"}
+    ]
     assert assistant[0].payload["metadata"]["provider_response"]["output"][0]["type"] == "function_call"
     assert assistant[0].payload["metadata"]["provider_response"]["usage"]["input_tokens"] == 10
+
+
+def test_llm_provider_runner_sends_json_assistant_content_back_to_provider(tmp_path):
+    asyncio.run(_assert_llm_provider_runner_sends_json_assistant_content_back_to_provider(tmp_path))
+
+
+async def _assert_llm_provider_runner_sends_json_assistant_content_back_to_provider(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    provider = CapturingProvider()
+    registry = Registry()
+    registry.add_provider(provider)
+    plugin = LlmProviderRunnerPlugin()
+    assistant_output = [{"type": "function_call", "name": "echo", "arguments": "{\"text\":\"hi\"}"}]
+
+    await bus.append_message(SessionCreated(session_id="sess_1"))
+    await bus.append_message(
+        LlmRunRequested(session_id="sess_1", provider="full-response", model="test-model", run_id="llm_previous")
+    )
+    await bus.append_message(
+        AssistantMessageCreated(
+            session_id="sess_1",
+            content=assistant_output,
+            provider="full-response",
+            model="test-model",
+            run_id="llm_previous",
+        )
+    )
+    await bus.append_message(UserMessageCreated(session_id="sess_1", content="continue"))
+    await bus.append_message(
+        LlmRunRequested(session_id="sess_1", provider="capture", model="test-model", run_id="llm_1")
+    )
+
+    await plugin.process_pending(bus, registry=registry)
+
+    assert provider.messages[0].role.value == "assistant"
+    assert provider.messages[0].content == assistant_output
+    assert provider.messages[1].content == "continue"
 
 
 def test_llm_provider_runner_writes_failed_event_for_unknown_provider(tmp_path):
