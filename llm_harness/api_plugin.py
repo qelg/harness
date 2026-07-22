@@ -22,6 +22,8 @@ from llm_harness.core.types import (
 )
 from llm_harness.plugins import Registry
 
+MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset({"llm.run.failed"})
+
 
 class CreateSessionRequest(BaseModel):
     title: str | None = None
@@ -104,7 +106,7 @@ class HarnessApiPlugin:
             return [
                 _message_from_event(event)
                 for event in bus.replay(
-                    EventFilter(names=MESSAGE_CREATED_NAMES, tags={"session": session_id})
+                    EventFilter(names=MESSAGE_TIMELINE_NAMES, tags={"session": session_id})
                 )
             ]
 
@@ -194,6 +196,8 @@ def _session_from_events(event: BusEvent) -> dict[str, Any]:
 
 
 def _message_from_event(event: BusEvent) -> dict[str, Any]:
+    if event.name == "llm.run.failed":
+        return _failed_run_message_from_event(event)
     return {
         "id": event.id,
         "session_id": event.tags["session"],
@@ -204,6 +208,26 @@ def _message_from_event(event: BusEvent) -> dict[str, Any]:
         "tool": event.payload.get("tool"),
         "run_id": event.payload.get("run_id"),
         "metadata": event.payload.get("metadata", {}),
+        "event_name": event.name,
+        "created_at_ms": event.created_at_ms,
+    }
+
+
+def _failed_run_message_from_event(event: BusEvent) -> dict[str, Any]:
+    error = event.payload.get("error") or "LLM run failed"
+    return {
+        "id": event.id,
+        "session_id": event.tags["session"],
+        "role": "assistant",
+        "content": f"LLM run failed: {error}",
+        "provider": event.payload.get("provider"),
+        "model": event.payload.get("model"),
+        "tool": None,
+        "run_id": event.payload.get("run_id"),
+        "metadata": {
+            "error": error,
+            "retryable": event.payload.get("retryable", False),
+        },
         "event_name": event.name,
         "created_at_ms": event.created_at_ms,
     }

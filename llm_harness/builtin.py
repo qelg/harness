@@ -6,12 +6,13 @@ from llm_harness.auth_plugins.chatgpt_oauth import ChatGPTOAuthPlugin
 from llm_harness.auth_plugins.openai_codex_device import OpenAICodexDeviceAuthPlugin
 from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
+from llm_harness.providers.chatgpt_codex import ChatGPTCodexProvider
 from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
 from llm_harness.tools.podman_shell import PodmanShellTool
 
 
-def register(registry) -> None:
+def register(registry, *, bus=None) -> None:
     settings = Settings.from_env()
     registry.add_api_plugin(HarnessApiPlugin(settings=settings))
     registry.add_provider(
@@ -21,6 +22,8 @@ def register(registry) -> None:
             api_key=settings.openai_api_key,
         )
     )
+    if bus is not None:
+        registry.add_provider(ChatGPTCodexProvider(conn=bus.conn, settings=settings))
     registry.add_provider(
         OpenAICompatibleProvider(
             name="openrouter",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from importlib.metadata import entry_points
 
 from llm_harness.protocols import ApiPlugin, EventConsumerPlugin, LLMProvider, Tool
@@ -33,12 +34,15 @@ class Registry:
             plugin.install_event_consumers(app=app, bus=bus, registry=self)
 
 
-def load_plugins(registry: Registry) -> None:
+def load_plugins(registry: Registry, *, bus=None) -> None:
     from llm_harness.builtin import register
 
-    register(registry)
+    register(registry, bus=bus)
     for entry_point in entry_points(group="llm_harness.plugins"):
         if entry_point.name == "builtin":
             continue
         plugin_register = entry_point.load()
-        plugin_register(registry)
+        if "bus" in inspect.signature(plugin_register).parameters:
+            plugin_register(registry, bus=bus)
+        else:
+            plugin_register(registry)

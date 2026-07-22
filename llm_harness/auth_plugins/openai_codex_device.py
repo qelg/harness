@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException
 
+from llm_harness.auth_plugins.token_store import ensure_oauth_schema, expires_at_for_token, metadata_for_token
 from llm_harness.config import Settings
 
 
@@ -134,39 +135,7 @@ class OpenAICodexDeviceAuthPlugin:
         app.include_router(router)
 
     def _init_schema(self, conn: sqlite3.Connection) -> None:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS oauth_device_codes (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              provider TEXT NOT NULL,
-              device_auth_id TEXT NOT NULL UNIQUE,
-              user_code TEXT NOT NULL,
-              verification_url TEXT NOT NULL,
-              interval_seconds INTEGER NOT NULL,
-              created_at TEXT NOT NULL,
-              expires_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS oauth_tokens (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              provider TEXT NOT NULL,
-              subject TEXT NOT NULL,
-              access_token TEXT NOT NULL,
-              refresh_token TEXT,
-              token_type TEXT,
-              scope TEXT,
-              expires_at TEXT,
-              metadata_json TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_provider
-              ON oauth_device_codes(provider, expires_at);
-            CREATE INDEX IF NOT EXISTS idx_oauth_tokens_provider_subject
-              ON oauth_tokens(provider, subject);
-            """
-        )
+        ensure_oauth_schema(conn)
 
     async def _request_device_code(self) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -240,12 +209,8 @@ class OpenAICodexDeviceAuthPlugin:
 
     def _store_token(self, conn: sqlite3.Connection, *, token_payload: dict[str, Any]) -> int:
         now = _utc_now()
-        expires_at = _expires_at(token_payload)
-        metadata = _metadata(
-            token_payload,
-            base_url=self.settings.codex_oauth_base_url,
-            refresh_after=_refresh_after(expires_at, self.settings.codex_oauth_refresh_skew_seconds),
-        )
+        expires_at = expires_at_for_token(token_payload)
+        metadata = metadata_for_token(token_payload, settings=self.settings)
         with conn:
             cursor = conn.execute(
                 """
@@ -272,12 +237,8 @@ class OpenAICodexDeviceAuthPlugin:
 
     def _update_token(self, conn: sqlite3.Connection, *, token_id: int, token_payload: dict[str, Any]) -> None:
         now = _utc_now()
-        expires_at = _expires_at(token_payload)
-        metadata = _metadata(
-            token_payload,
-            base_url=self.settings.codex_oauth_base_url,
-            refresh_after=_refresh_after(expires_at, self.settings.codex_oauth_refresh_skew_seconds),
-        )
+        expires_at = expires_at_for_token(token_payload)
+        metadata = metadata_for_token(token_payload, settings=self.settings)
         with conn:
             conn.execute(
                 """
@@ -349,33 +310,6 @@ def _jwt_claim(token: str | None, claim: str) -> Any:
     except (ValueError, json.JSONDecodeError):
         return None
     return claims.get(claim)
-
-
-def _metadata(token_payload: dict[str, Any], *, base_url: str, refresh_after: str | None) -> dict[str, Any]:
-    return {
-        "auth_mode": "chatgpt",
-        "source": "device-code",
-        "base_url": base_url,
-        "refresh_after": refresh_after,
-        "token_response": {
-            key: value
-            for key, value in token_payload.items()
-            if key not in {"access_token", "refresh_token"}
-        },
-    }
-
-
-def _expires_at(token_payload: dict[str, Any]) -> str | None:
-    expires_in = token_payload.get("expires_in")
-    if expires_in is None:
-        return None
-    return _dump_dt(_utc_now() + timedelta(seconds=int(expires_in)))
-
-
-def _refresh_after(expires_at: str | None, skew_seconds: int) -> str | None:
-    if expires_at is None:
-        return None
-    return _dump_dt(_load_dt(expires_at) - timedelta(seconds=skew_seconds))
 
 
 def _public_token(row: sqlite3.Row) -> dict[str, Any]:

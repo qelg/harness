@@ -1,4 +1,5 @@
 const apiBase = new URLSearchParams(window.location.search).get("api") || "";
+const fallbackProviders = ["chatgpt-codex", "mock-llm", "openrouter", "openai-codex"];
 
 const state = {
   sessions: [],
@@ -19,6 +20,10 @@ const els = {
   providerSelect: document.querySelector("#providerSelect"),
   modelName: document.querySelector("#modelName"),
   saveModel: document.querySelector("#saveModel"),
+  modelStatus: document.querySelector("#modelStatus"),
+  authStatus: document.querySelector("#authStatus"),
+  loginChatGPT: document.querySelector("#loginChatGPT"),
+  deviceLogin: document.querySelector("#deviceLogin"),
   messages: document.querySelector("#messages"),
   messageForm: document.querySelector("#messageForm"),
   messageContent: document.querySelector("#messageContent"),
@@ -28,19 +33,81 @@ const els = {
 els.refreshSessions.addEventListener("click", () => loadSessions());
 els.createSessionForm.addEventListener("submit", createSession);
 els.modelForm.addEventListener("submit", saveModelSelection);
+els.loginChatGPT.addEventListener("click", startChatGPTLogin);
 els.messageForm.addEventListener("submit", sendMessage);
 
-await loadProviders();
-await loadSessions();
+init().catch((error) => {
+  setSessionsStatus(error.message);
+  setModelStatus(error.message);
+});
+
+async function init() {
+  renderProviderOptions();
+  setModelStatus("Loading providers...");
+  await loadProviders();
+  await loadChatGPTTokens();
+  await loadSessions();
+}
 
 async function loadProviders() {
   try {
     const payload = await request("/providers");
     state.providers = payload.providers || [];
-    renderProviderOptions();
+    setModelStatus("Providers loaded. Select a session to use a session model.");
   } catch (error) {
     state.providers = [];
-    renderProviderOptions();
+    setModelStatus(`Using fallback providers. ${error.message}`);
+  }
+  renderProviderOptions();
+}
+
+async function loadChatGPTTokens() {
+  try {
+    const tokens = await request("/auth/openai-codex/tokens");
+    const latest = tokens[0];
+    if (!latest) {
+      setAuthStatus("Not logged in");
+      return;
+    }
+    const expiry = latest.expires_at ? new Date(latest.expires_at).toLocaleString() : "no expiry";
+    setAuthStatus(`Logged in as ${latest.subject}; expires ${expiry}`);
+  } catch (error) {
+    setAuthStatus(`Login status unavailable. ${error.message}`);
+  }
+}
+
+async function startChatGPTLogin() {
+  els.loginChatGPT.disabled = true;
+  els.deviceLogin.hidden = true;
+  els.deviceLogin.innerHTML = "";
+  setAuthStatus("Starting login...");
+  try {
+    const device = await request("/auth/openai-codex/device/start", { method: "POST" });
+    renderDeviceLogin(device);
+    await pollChatGPTLogin(device);
+  } catch (error) {
+    setAuthStatus(error.message);
+  } finally {
+    els.loginChatGPT.disabled = false;
+  }
+}
+
+async function pollChatGPTLogin(device) {
+  let current = device;
+  while (true) {
+    await sleep((current.interval_seconds || 5) * 1000);
+    const payload = await request(`/auth/openai-codex/device/${encodeURIComponent(device.id)}/poll`, {
+      method: "POST",
+    });
+    if (payload.status === "complete") {
+      els.deviceLogin.hidden = true;
+      setAuthStatus(`Logged in as ${payload.token.subject}`);
+      ensureProviderOption("chatgpt-codex");
+      await loadProviders();
+      return;
+    }
+    current = payload;
+    renderDeviceLogin({ ...device, ...payload });
   }
 }
 
@@ -89,9 +156,6 @@ async function selectSession(sessionId) {
   els.chatMeta.textContent = "Loading model...";
   els.messageContent.disabled = false;
   els.sendMessage.disabled = false;
-  els.providerSelect.disabled = false;
-  els.modelName.disabled = false;
-  els.saveModel.disabled = false;
   await loadModelSelection();
   await loadMessages();
 }
@@ -107,21 +171,27 @@ async function loadModelSelection() {
 
 async function saveModelSelection(event) {
   event.preventDefault();
-  if (!state.selectedSessionId) {
-    return;
-  }
   const provider = els.providerSelect.value.trim();
   const model = els.modelName.value.trim();
   if (!provider || !model) {
+    setModelStatus("Provider and model are required.");
     return;
   }
   els.saveModel.disabled = true;
   try {
+    const body = { provider, model };
+    if (state.selectedSessionId) {
+      body.session_id = state.selectedSessionId;
+    }
     await request("/model-selection", {
       method: "POST",
-      body: JSON.stringify({ provider, model, session_id: state.selectedSessionId }),
+      body: JSON.stringify(body),
     });
-    await loadModelSelection();
+    if (state.selectedSessionId) {
+      await loadModelSelection();
+    } else {
+      setModelStatus(`Saved global default: ${provider} / ${model}`);
+    }
   } finally {
     els.saveModel.disabled = false;
   }
@@ -188,10 +258,24 @@ function renderSessions() {
 }
 
 function renderProviderOptions() {
-  const values = state.providers.length > 0 ? state.providers : ["mock-llm"];
+  const selected = els.providerSelect.value;
+  const values = uniqueProviders([...fallbackProviders, ...state.providers, selected].filter(Boolean));
   els.providerSelect.innerHTML = values
     .map((provider) => `<option value="${escapeHtml(provider)}">${escapeHtml(provider)}</option>`)
     .join("");
+  if (selected && values.includes(selected)) {
+    els.providerSelect.value = selected;
+  }
+}
+
+function renderDeviceLogin(device) {
+  els.deviceLogin.hidden = false;
+  els.deviceLogin.innerHTML = `
+    <a href="${escapeHtml(device.verification_url)}" target="_blank" rel="noreferrer">Open verification</a>
+    <code>${escapeHtml(device.user_code)}</code>
+    <span>Waiting for approval...</span>
+  `;
+  setAuthStatus("Approve the device code in ChatGPT.");
 }
 
 function renderModelSelection() {
@@ -206,6 +290,7 @@ function renderModelSelection() {
   els.providerSelect.value = selection.provider;
   els.modelName.value = selection.model;
   els.chatMeta.textContent = `${selection.provider} / ${selection.model} (${selection.scope})`;
+  setModelStatus(`Current session uses ${selection.provider} / ${selection.model} from ${selection.scope}.`);
   if (tags && tags !== state.selectedSessionId) {
     els.chatMeta.textContent += ` · ${tags}`;
   }
@@ -219,6 +304,10 @@ function ensureProviderOption(provider) {
   option.value = provider;
   option.textContent = provider;
   els.providerSelect.append(option);
+}
+
+function uniqueProviders(providers) {
+  return [...new Set(providers.map((provider) => provider.trim()).filter(Boolean))].sort();
 }
 
 function renderMessages(messages) {
@@ -247,15 +336,24 @@ function renderEmptyChat() {
   els.chatMeta.textContent = "No session selected";
   els.messageContent.disabled = true;
   els.sendMessage.disabled = true;
-  els.providerSelect.disabled = true;
-  els.modelName.disabled = true;
-  els.saveModel.disabled = true;
-  els.modelName.value = "";
+  setModelStatus("No session selected; saving sets the global default.");
   els.messages.innerHTML = `<div class="empty">Create or select a session.</div>`;
 }
 
 function setSessionsStatus(text) {
   els.sessionsList.innerHTML = `<div class="status">${escapeHtml(text)}</div>`;
+}
+
+function setModelStatus(text) {
+  els.modelStatus.textContent = text;
+}
+
+function setAuthStatus(text) {
+  els.authStatus.textContent = text;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function request(path, options = {}) {

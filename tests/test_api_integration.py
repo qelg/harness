@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
 
 from llm_harness.api import create_app
+from llm_harness.core.types import LlmRunFailed
 
 
 def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatch):
@@ -33,6 +36,30 @@ def test_api_serves_frontend(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert "LLM Harness" in response.text
+    assert "mock-llm" in response.text
+    assert 'src="./app.js?v=4"' in response.text
+    assert "loginChatGPT" in response.text
+
+
+def test_api_serves_frontend_javascript_that_loads_providers(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.get("/frontend/app.js")
+
+    assert response.status_code == 200
+    assert 'request("/providers")' in response.text
+    assert "function init()" in response.text
+
+
+def test_api_lists_builtin_providers(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.get("/providers")
+
+    assert response.status_code == 200
+    assert {"chatgpt-codex", "mock-llm", "openrouter", "openai-codex"}.issubset(set(response.json()["providers"]))
 
 
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):
@@ -73,6 +100,35 @@ def test_api_lists_messages_for_later_session(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_api_lists_failed_llm_run_as_latest_message(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+
+    session_id = client.post("/sessions", json={"title": "failure"}).json()["id"]
+    client.post(f"/sessions/{session_id}/messages", json={"content": "hello"})
+    asyncio.run(
+        app.state.bus.append_message(
+            LlmRunFailed(
+                session_id=session_id,
+                provider="mock-llm",
+                model="test-model",
+                run_id="llm_1",
+                error="provider exploded",
+            )
+        )
+    )
+
+    response = client.get(f"/sessions/{session_id}/messages")
+
+    assert response.status_code == 200
+    messages = response.json()
+    assert [message["event_name"] for message in messages] == ["chat.message.user.created", "llm.run.failed"]
+    assert messages[-1]["role"] == "assistant"
+    assert messages[-1]["content"] == "LLM run failed: provider exploded"
+    assert messages[-1]["metadata"]["retryable"] is False
 
 
 def test_api_creates_model_selection_event(tmp_path, monkeypatch):

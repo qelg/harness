@@ -15,7 +15,7 @@ def create_app() -> FastAPI:
     settings = Settings.from_env()
     bus = EventBus(settings.event_database_path)
     registry = Registry()
-    load_plugins(registry)
+    load_plugins(registry, bus=bus)
 
     app = FastAPI(title="LLM Harness")
     app.state.bus = bus
