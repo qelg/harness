@@ -135,7 +135,8 @@ async def _assert_llm_provider_runner_persists_full_provider_response(tmp_path):
 
     assistant = bus.replay(EventFilter(names=frozenset({"chat.message.assistant.created"}), tags={"run": "llm_1"}))
     assert len(assistant) == 1
-    assert assistant[0].payload["content"] == "thinking"
+    assert '"type": "function_call"' in assistant[0].payload["content"]
+    assert '"name": "echo"' in assistant[0].payload["content"]
     assert assistant[0].payload["metadata"]["provider_response"]["output"][0]["type"] == "function_call"
     assert assistant[0].payload["metadata"]["provider_response"]["usage"]["input_tokens"] == 10
 

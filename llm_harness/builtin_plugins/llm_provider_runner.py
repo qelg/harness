@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -111,7 +112,7 @@ class LlmProviderRunnerPlugin(EventConsumer):
         await bus.append_message(
             AssistantMessageCreated(
                 session_id=session_id,
-                content="".join(content_parts),
+                content=_assistant_content(content_parts, provider_response),
                 provider=provider_name,
                 model=model,
                 run_id=run_id,
@@ -178,6 +179,12 @@ def _message_from_event(event: EventRecord) -> Message:
         metadata=event.payload.get("metadata", {}),
         created_at=datetime.fromtimestamp(event.created_at_ms / 1000, timezone.utc),
     )
+
+
+def _assistant_content(content_parts: list[str], provider_response: dict[str, Any] | None) -> str:
+    if provider_response and provider_response.get("output") is not None:
+        return json.dumps(provider_response["output"], ensure_ascii=False, indent=2)
+    return "".join(content_parts)
 
 
 async def _stream_provider_response(provider: Any, *, model: str, messages: list[Message], tools: list[ToolSpec]):

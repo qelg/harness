@@ -177,7 +177,63 @@ def test_chatgpt_codex_provider_combines_response_sse_events(tmp_path, monkeypat
     assert completed["output"][0]["content"][0]["text"] == "hello"
     assert completed["output"][1]["name"] == "podman-shell"
     assert completed["output"][1]["arguments"] == '{"cmd":"echo hi"}'
-    assert len(completed["stream_events"]) == 8
+    assert "stream_events" not in completed
+
+
+def test_chatgpt_codex_provider_includes_stream_events_when_logging_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    monkeypatch.setenv("HARNESS_LOG_PROVIDER_EVENTS", "1")
+    app = create_app()
+    conn = app.state.bus.conn
+    ensure_oauth_schema(conn)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_tokens(
+              provider, subject, access_token, refresh_token, token_type, scope,
+              expires_at, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "openai-codex",
+                "codex-user",
+                "access-token",
+                "refresh-token",
+                "Bearer",
+                "openid",
+                None,
+                json.dumps({"refresh_after": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}),
+                datetime.now(UTC).isoformat(),
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"type":"response.created","response":{"id":"resp_1"}}\n\n'
+                b'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
+                b"data: [DONE]\n\n"
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*args, **kwargs):
+        return original_client(transport=transport, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("llm_harness.providers.chatgpt_codex.httpx.AsyncClient", client_factory)
+    provider = app.state.registry.providers["chatgpt-codex"]
+
+    async def consume_events() -> list:
+        return [event async for event in provider.stream_response(model="codex", messages=[])]
+
+    completed = asyncio.run(consume_events())[-1].response
+    assert [event["type"] for event in completed["stream_events"]] == ["response.created", "response.completed"]
 
 
 def test_chatgpt_codex_provider_includes_error_response_body(tmp_path, monkeypatch):

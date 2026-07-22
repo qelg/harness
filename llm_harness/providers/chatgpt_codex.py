@@ -89,7 +89,7 @@ class ChatGPTCodexProvider:
                         yield ProviderStreamEvent(type="delta", delta=content, raw_event=event)
                 yield ProviderStreamEvent(
                     type="completed",
-                    response=accumulator.response(),
+                    response=accumulator.response(include_stream_events=self.settings.log_provider_events),
                 )
 
 
@@ -195,11 +195,12 @@ class _ResponsesAccumulator:
         elif event.get("arguments") is not None:
             item["arguments"] = event["arguments"]
 
-    def response(self) -> dict:
+    def response(self, *, include_stream_events: bool = False) -> dict:
         combined = dict(self.response_data)
         if self.output_by_index:
             combined["output"] = [self.output_by_index[index] for index in sorted(self.output_by_index)]
-        combined["stream_events"] = self.raw_events
+        if include_stream_events:
+            combined["stream_events"] = self.raw_events
         return combined
 
 
