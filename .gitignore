@@ -1,0 +1,8 @@
+.harness/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+*.egg-info/
+
