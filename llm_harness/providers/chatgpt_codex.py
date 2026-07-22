@@ -9,7 +9,7 @@ import httpx
 
 from llm_harness.auth_plugins.token_store import CodexOAuthTokenStore
 from llm_harness.config import Settings
-from llm_harness.core.types import Message, ToolSpec
+from llm_harness.core.types import Message, ProviderStreamEvent, ToolSpec
 
 DEFAULT_CODEX_INSTRUCTIONS = "You are a helpful coding assistant."
 logger = logging.getLogger(__name__)
@@ -30,6 +30,17 @@ class ChatGPTCodexProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[str]:
+        async for event in self.stream_response(model=model, messages=messages, tools=tools):
+            if event.type == "delta" and event.delta:
+                yield event.delta
+
+    async def stream_response(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[ProviderStreamEvent]:
         access_token = await self.tokens.access_token()
         payload = {
             "model": model,
@@ -62,6 +73,8 @@ class ChatGPTCodexProvider:
                 json=payload,
             ) as response:
                 await _raise_for_status(response)
+                raw_events: list[dict] = []
+                final_response: dict | None = None
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -69,11 +82,18 @@ class ChatGPTCodexProvider:
                     if data == "[DONE]":
                         break
                     event = json.loads(data)
+                    raw_events.append(event)
+                    if event.get("type") == "response.completed" and isinstance(event.get("response"), dict):
+                        final_response = event["response"]
                     if self.settings.log_provider_events:
                         logger.info("chatgpt-codex event %s", json.dumps(event, sort_keys=True))
                     content = _content_from_event(event)
                     if content:
-                        yield content
+                        yield ProviderStreamEvent(type="delta", delta=content, raw_event=event)
+                yield ProviderStreamEvent(
+                    type="completed",
+                    response=final_response or {"events": raw_events},
+                )
 
 
 def _content_from_event(event: dict) -> str | None:

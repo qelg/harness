@@ -4,7 +4,15 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 
 from llm_harness.core.events import EventFilter, EventService
-from llm_harness.core.types import LlmRunRequested, Message, SessionCreated, ToolMessageCreated, ToolSpec, UserMessageCreated
+from llm_harness.core.types import (
+    LlmRunRequested,
+    Message,
+    ProviderStreamEvent,
+    SessionCreated,
+    ToolMessageCreated,
+    ToolSpec,
+    UserMessageCreated,
+)
 from llm_harness.plugins import Registry
 from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 
@@ -40,6 +48,27 @@ class TestToolSet:
                 input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
             )
         ]
+
+
+class FullResponseProvider:
+    name = "full-response"
+
+    async def stream_response(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        yield ProviderStreamEvent(type="delta", delta="thinking")
+        yield ProviderStreamEvent(
+            type="completed",
+            response={
+                "id": "resp_1",
+                "output": [{"type": "function_call", "name": "echo", "arguments": "{\"text\":\"hi\"}"}],
+                "usage": {"input_tokens": 10, "output_tokens": 4},
+            },
+        )
 
 
 def test_llm_provider_runner_streams_deltas_and_creates_assistant_message(tmp_path):
@@ -84,6 +113,31 @@ async def _assert_llm_provider_runner_streams_deltas_and_creates_assistant_messa
     assert len(assistant) == 1
     assert assistant[0].payload["content"] == "hello"
     assert assistant[0].causation_id == request.id
+
+
+def test_llm_provider_runner_persists_full_provider_response(tmp_path):
+    asyncio.run(_assert_llm_provider_runner_persists_full_provider_response(tmp_path))
+
+
+async def _assert_llm_provider_runner_persists_full_provider_response(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    registry = Registry()
+    registry.add_provider(FullResponseProvider())
+    plugin = LlmProviderRunnerPlugin()
+
+    await bus.append_message(SessionCreated(session_id="sess_1"))
+    await bus.append_message(UserMessageCreated(session_id="sess_1", content="please call echo"))
+    await bus.append_message(
+        LlmRunRequested(session_id="sess_1", provider="full-response", model="test-model", run_id="llm_1")
+    )
+
+    await plugin.process_pending(bus, registry=registry)
+
+    assistant = bus.replay(EventFilter(names=frozenset({"chat.message.assistant.created"}), tags={"run": "llm_1"}))
+    assert len(assistant) == 1
+    assert assistant[0].payload["content"] == "thinking"
+    assert assistant[0].payload["metadata"]["provider_response"]["output"][0]["type"] == "function_call"
+    assert assistant[0].payload["metadata"]["provider_response"]["usage"]["input_tokens"] == 10
 
 
 def test_llm_provider_runner_writes_failed_event_for_unknown_provider(tmp_path):

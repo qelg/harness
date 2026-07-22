@@ -62,6 +62,14 @@ class ToolSpec:
     input_schema: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class ProviderStreamEvent:
+    type: str
+    delta: str | None = None
+    response: dict[str, Any] | None = None
+    raw_event: dict[str, Any] | None = None
+
+
 class CoreEventMessage(Protocol):
     name: str
 

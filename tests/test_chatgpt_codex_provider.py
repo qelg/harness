@@ -72,7 +72,11 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
         assert payload["store"] is False
         return httpx.Response(
             200,
-            content=b'data: {"type":"response.output_text.delta","delta":"hi"}\n\ndata: [DONE]\n\n',
+            content=(
+                b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+                b'data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":3},"output":[{"type":"function_call","name":"echo"}]}}\n\n'
+                b"data: [DONE]\n\n"
+            ),
             headers={"content-type": "text/event-stream"},
         )
 
@@ -94,6 +98,16 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
         assert asyncio.run(consume()) == ["hi"]
     assert "chatgpt-codex event" in caplog.text
     assert "response.output_text.delta" in caplog.text
+
+    async def consume_events() -> list:
+        message = Message(id=1, session_id="sess_1", role=Role.USER, content="hello")
+        tool = ToolSpec(name="echo", description="Echo text.", input_schema={"type": "object"})
+        return [event async for event in provider.stream_response(model="codex", messages=[message], tools=[tool])]
+
+    events = asyncio.run(consume_events())
+    assert events[-1].type == "completed"
+    assert events[-1].response["output"][0]["type"] == "function_call"
+    assert events[-1].response["usage"]["input_tokens"] == 3
 
 
 def test_chatgpt_codex_provider_includes_error_response_body(tmp_path, monkeypatch):

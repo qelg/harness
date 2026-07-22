@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, TYPE_CHECKING
 
-from llm_harness.core.types import Message, ToolCall, ToolResult, ToolSpec
+from llm_harness.core.types import Message, ProviderStreamEvent, ToolCall, ToolResult, ToolSpec
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -23,6 +23,15 @@ class LLMProvider(Protocol):
         tools: Sequence[ToolSpec] = (),
     ) -> AsyncIterator[str]:
         """Yield assistant text deltas."""
+
+    async def stream_response(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        """Yield structured provider stream events, including the final full response when available."""
 
 
 class Tool(Protocol):

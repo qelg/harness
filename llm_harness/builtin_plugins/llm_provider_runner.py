@@ -12,6 +12,7 @@ from llm_harness.core.types import (
     LlmRunFailed,
     LlmRunStarted,
     Message,
+    ProviderStreamEvent,
     Role,
     ToolSpec,
 )
@@ -69,19 +70,25 @@ class LlmProviderRunnerPlugin(EventConsumer):
         )
 
         content_parts: list[str] = []
+        provider_response: dict[str, Any] | None = None
         try:
             messages = self._messages_for_session(bus, session_id=session_id, before_event_id=event.id)
             sequence = 0
-            async for delta in provider.stream_chat(model=model, messages=messages, tools=tools):
+            async for stream_event in _stream_provider_response(provider, model=model, messages=messages, tools=tools):
+                if stream_event.type == "completed":
+                    provider_response = stream_event.response
+                    continue
+                if stream_event.type != "delta" or not stream_event.delta:
+                    continue
                 sequence += 1
-                content_parts.append(delta)
+                content_parts.append(stream_event.delta)
                 await bus.publish_message_transient(
                     LlmDelta(
                         session_id=session_id,
                         provider=provider_name,
                         model=model,
                         run_id=run_id,
-                        delta=delta,
+                        delta=stream_event.delta,
                         sequence=sequence,
                     ),
                     producer=self.name,
@@ -108,6 +115,7 @@ class LlmProviderRunnerPlugin(EventConsumer):
                 provider=provider_name,
                 model=model,
                 run_id=run_id,
+                metadata={"provider_response": provider_response} if provider_response is not None else {},
             ),
             producer=self.name,
             causation_id=event.id,
@@ -170,6 +178,16 @@ def _message_from_event(event: EventRecord) -> Message:
         metadata=event.payload.get("metadata", {}),
         created_at=datetime.fromtimestamp(event.created_at_ms / 1000, timezone.utc),
     )
+
+
+async def _stream_provider_response(provider: Any, *, model: str, messages: list[Message], tools: list[ToolSpec]):
+    if hasattr(provider, "stream_response"):
+        async for event in provider.stream_response(model=model, messages=messages, tools=tools):
+            yield event
+        return
+    async for delta in provider.stream_chat(model=model, messages=messages, tools=tools):
+        yield ProviderStreamEvent(type="delta", delta=delta)
+    yield ProviderStreamEvent(type="completed", response=None)
 
 
 def _tools_for_toolsets(registry: Any, toolsets: tuple[str, ...]) -> list[ToolSpec]:
