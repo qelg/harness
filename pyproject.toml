@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "llm-harness"
 version = "0.1.0"
-description = "Session-oriented LLM harness with plugin providers, tools, database hooks, and streaming."
+description = "Session-oriented LLM harness with event-driven plugin providers, tools, and streaming."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

@@ -6,12 +6,10 @@ from llm_harness.auth_plugins.openai_codex_device import _jwt_claim, _subject_fr
 
 
 def test_openai_codex_device_plugin_installs_schema(tmp_path, monkeypatch):
-    db_path = tmp_path / "harness.db"
-    monkeypatch.setenv("HARNESS_DB", str(db_path))
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
 
     app = create_app()
-    conn = app.state.store._conn
+    conn = app.state.bus.conn
 
     tables = {
         row["name"]

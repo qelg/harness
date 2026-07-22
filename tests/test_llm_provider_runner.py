@@ -4,8 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Sequence
 
 from llm_harness.core.events import EventFilter, EventService
-from llm_harness.core.types import LlmRunRequested, SessionCreated, ToolMessageCreated, UserMessageCreated
-from llm_harness.domain import Message
+from llm_harness.core.types import LlmRunRequested, Message, SessionCreated, ToolMessageCreated, UserMessageCreated
 from llm_harness.plugins import Registry
 from plugins.llm_provider_runner import LlmProviderRunnerPlugin
 

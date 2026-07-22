@@ -11,8 +11,9 @@ from llm_harness.core.types import (
     LlmDelta,
     LlmRunFailed,
     LlmRunStarted,
+    Message,
+    Role,
 )
-from llm_harness.domain import Message, Role
 
 
 class LlmProviderRunnerPlugin(EventConsumer):
@@ -20,7 +21,7 @@ class LlmProviderRunnerPlugin(EventConsumer):
     subscriber = "plugin:llm-provider-runner"
     event_filter = EventFilter(names=frozenset({"llm.run.requested"}))
 
-    async def process_event(self, bus: EventBus, event: EventRecord, *, store: Any = None, registry: Any = None) -> None:
+    async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
         if await self._already_finished(bus, event):
             return
 

@@ -1,5 +1,5 @@
 {
-  description = "Session-oriented LLM harness with plugin providers, tools, database hooks, and streaming.";
+  description = "Session-oriented LLM harness with event-driven plugin providers, tools, and streaming.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -17,31 +17,41 @@
         f:
         nixpkgs.lib.genAttrs supportedSystems (
           system:
-          f {
-            inherit system;
+          let
             pkgs = import nixpkgs { inherit system; };
+            python = pkgs.python312.override {
+              packageOverrides = pyFinal: pyPrev: {
+                inline-snapshot = pyPrev.inline-snapshot.overridePythonAttrs (_old: {
+                  doCheck = false;
+                });
+              };
+            };
+            pythonPackages = python.pkgs;
+          in
+          f {
+            inherit system pkgs python pythonPackages;
           }
         );
     in
     {
       packages = forAllSystems (
-        { pkgs, system }:
+        { pkgs, pythonPackages, system, ... }:
         {
           default = self.packages.${system}.llm-harness;
 
           podman-tool-image = pkgs.callPackage ./nix/podman-tool-image.nix { };
 
-          llm-harness = pkgs.python312Packages.buildPythonApplication {
+          llm-harness = pythonPackages.buildPythonApplication {
             pname = "llm-harness";
             version = "0.1.0";
             pyproject = true;
             src = ./.;
 
             nativeBuildInputs = [
-              pkgs.python312Packages.hatchling
+              pythonPackages.hatchling
             ];
 
-            propagatedBuildInputs = with pkgs.python312Packages; [
+            propagatedBuildInputs = with pythonPackages; [
               fastapi
               httpx
               pydantic
@@ -49,7 +59,7 @@
             ];
 
             nativeCheckInputs = [
-              pkgs.python312Packages.pytest
+              pythonPackages.pytest
             ];
 
             checkPhase = ''
@@ -61,30 +71,30 @@
             pythonImportsCheck = [
               "llm_harness.api"
               "llm_harness.config"
-              "llm_harness.db"
+              "llm_harness.core.events"
             ];
           };
         }
       );
 
       checks = forAllSystems (
-        { pkgs, system }:
+        { system, ... }:
         {
           inherit (self.packages.${system}) llm-harness;
         }
       );
 
       devShells = forAllSystems (
-        { pkgs, ... }:
+        { pkgs, python, pythonPackages, ... }:
         {
           default = pkgs.mkShell {
             packages = [
-              pkgs.python312
-              pkgs.python312Packages.fastapi
-              pkgs.python312Packages.httpx
-              pkgs.python312Packages.pydantic
-              pkgs.python312Packages.pytest
-              pkgs.python312Packages.uvicorn
+              python
+              pythonPackages.fastapi
+              pythonPackages.httpx
+              pythonPackages.pydantic
+              pythonPackages.pytest
+              pythonPackages.uvicorn
             ];
           };
         }

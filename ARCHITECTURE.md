@@ -1,13 +1,13 @@
 # Architektur
 
-Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung ist ein kleines, session-orientiertes API-System fuer LLM-Chats, Plugin-Provider, Plugin-Tools, Datenbank-Hooks und optionale Podman-Isolation.
+Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung ist ein kleines, session-orientiertes API-System fuer LLM-Chats, Plugin-Provider, Plugin-Tools, Event-Consumer und optionale Podman-Isolation.
 
 ## Ziele
 
 - LLM-Anbieter sollen austauschbar sein. Eingebaut sind OpenAI-kompatible Provider fuer `openai-codex` und `openrouter` sowie `mock-llm` fuer Tests.
 - Tools sollen als Plugins registriert werden koennen.
 - Chats sollen persistent sein und Tags tragen, damit sie Projekten, Workloads oder Container-Zielen zugeordnet werden koennen.
-- Zustandsaenderungen sollen Events erzeugen. Plugins koennen ueber Hooks auf diese Events reagieren.
+- Zustandsaenderungen werden als Events gespeichert. Plugins koennen ueber EventFilter auf diese Events reagieren.
 - Streaming-Antworten sollen sofort an Clients geliefert und nach Abschluss als Message gespeichert werden.
 - Tool-Ausfuehrung soll pro Session isolierbar sein. Das eingebaute `podman-shell` Tool nutzt pro Session einen eigenen Container, sofern kein Tag-Mapping auf einen geteilten Container konfiguriert ist.
 
@@ -15,14 +15,13 @@ Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung is
 
 | Komponente | Datei | Verantwortung |
 | --- | --- | --- |
-| App Factory | `llm_harness/api.py` | Composition Root: Store, EventBus und Registry erzeugen, Plugins installieren. |
+| App Factory | `llm_harness/api.py` | Composition Root: EventBus und Registry erzeugen, Plugins installieren. |
 | Core API Plugin | `llm_harness/api_plugin.py` | HTTP-Endpunkte, SSE-Streaming vom Event-Bus und Schreiben von User-/Tool-Requests. |
-| Store | `llm_harness/db.py` | SQLite-Verbindung, Schema-Initialisierung, persistente Sessions, Messages und Events. |
-| Domain | `llm_harness/domain.py` | Dataclasses und Enums fuer Sessions, Messages, Events und Tool-Aufrufe. |
 | Core Event Types | `llm_harness/core/types.py` | Zentrale Core-Eventnamen, Tagtypen, Pflicht-Tags und neue `sess_...` Session-IDs. |
-| Plugin Registry | `llm_harness/plugins.py` | Registrierung und Lookup von LLM-Providern, Tools und Datenbank-Hooks. |
-| Eventing Engine | `llm_harness/events.py` | Eigene SQLite-Event-DB, monotone Event-IDs, Batch-Append, Tags, Replay und Fan-out. |
-| Plugin Protokolle | `llm_harness/protocols.py` | Minimale Python-Interfaces fuer Provider, Tools und Hooks. |
+| Event Consumer Base | `llm_harness/core/consumer.py` | Gemeinsame Replay-/Subscribe-/Ack-Logik fuer Event-Consumer-Plugins. |
+| Plugin Registry | `llm_harness/plugins.py` | Registrierung und Lookup von LLM-Providern, Tools, API-Plugins und Event-Consumern. |
+| Eventing Engine | `llm_harness/core/events.py` | Eigene SQLite-Event-DB, monotone Event-IDs, Batch-Append, Tags, Replay und Fan-out. |
+| Plugin Protokolle | `llm_harness/protocols.py` | Minimale Python-Interfaces fuer Provider, Tools, API-Plugins und Event-Consumer. |
 | Builtins | `llm_harness/builtin.py` | Registrierung der eingebauten OpenAI-kompatiblen Provider und des Podman-Tools. |
 | OpenAI-kompatibler Provider | `llm_harness/providers/openai_compatible.py` | Streaming gegen `/chat/completions` kompatible APIs. |
 | Mock LLM Provider | `llm_harness/providers/mock.py` | Deterministischer Streaming-Provider fuer Tests ohne LLM-Kosten. |
@@ -39,17 +38,16 @@ Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung is
 Beim Start der API passiert:
 
 1. `Settings.from_env()` liest Runtime-Konfiguration aus Umgebungsvariablen.
-2. `Store(settings.database_path)` oeffnet SQLite, aktiviert Foreign Keys und WAL.
-3. `store.init_schema()` legt fehlende Tabellen und Indizes an.
-4. `Registry()` wird erstellt.
-5. `load_plugins(registry)` registriert zuerst Builtins und danach Python Entry Points aus `llm_harness.plugins`.
-6. `EventService(settings.event_database_path)` wird erstellt.
-7. Die FastAPI-App speichert `store`, `bus` und `registry` in `app.state`.
-8. Alle API-Plugins installieren ihre Routen. Auch die Kern-HTTP-API ist ein Plugin: `harness-api`.
+2. `EventService(settings.event_database_path)` oeffnet SQLite, aktiviert Foreign Keys und WAL und initialisiert das Event-Schema.
+3. `Registry()` wird erstellt.
+4. `load_plugins(registry)` registriert zuerst Builtins und danach Python Entry Points aus `llm_harness.plugins`.
+5. Die FastAPI-App speichert `bus` und `registry` in `app.state`.
+6. Alle API-Plugins installieren ihre Routen. Auch die Kern-HTTP-API ist ein Plugin: `harness-api`.
+7. Alle Event-Consumer-Plugins installieren Startup-/Shutdown-Tasks.
 
-Die Registry ist aktuell pro Prozess in-memory. Persistenter Zustand liegt in SQLite. Plugins werden beim Prozessstart entdeckt; dynamisches Hot-Reloading von Plugins gibt es noch nicht.
+Die Registry ist aktuell pro Prozess in-memory. Persistenter Core-Zustand liegt im SQLite-Eventlog. Plugins werden beim Prozessstart entdeckt; dynamisches Hot-Reloading von Plugins gibt es noch nicht.
 
-Das Zielmodell ist: API und Plugins schreiben Events in den EventService. Der EventService weist monotone Millisekunden-IDs zu, persistiert in `events.db`, acknowledged erst nach Commit und dispatched danach an Abonnenten. Bestehende State-Tabellen sind bis zur weiteren Migration noch direkte Tabellen, sollen aber schrittweise zu Projektionen werden.
+API und Plugins schreiben Events in den EventService. Der EventService weist monotone Millisekunden-IDs zu, persistiert in `events.db`, acknowledged erst nach Commit und dispatched danach an Abonnenten. Plugin-eigene Tabellen, zum Beispiel OAuth-Token-Tabellen, duerfen in derselben SQLite-Verbindung angelegt werden.
 
 API-Plugins koennen beim Start eigene Routen und eigene Tabellen installieren. Das eingebaute `chatgpt-oauth` Plugin nutzt diese Erweiterung.
 
@@ -60,11 +58,9 @@ API-Plugins koennen beim Start eigene Routen und eigene Tabellen installieren. D
 `POST /sessions`
 
 1. API nimmt `title` und `tags` entgegen.
-2. Store normalisiert Tags: Whitespace wird entfernt, leere Tags werden verworfen, Duplikate bleiben nur einmal erhalten.
-3. Store schreibt `sessions`.
-4. Store schreibt ein `session.created` Event.
-5. Registry ruft alle Hooks mit diesem Event auf.
-6. API gibt die Session zurueck.
+2. API generiert eine neue `sess_...` ID.
+3. API schreibt `session.created`.
+4. API gibt eine Session-Projektion aus dem Event zurueck.
 
 ### Nachricht schreiben
 
@@ -98,14 +94,10 @@ Wenn waehrend des Provider-Streams ein Fehler auftritt, schreibt der Provider-Ru
 `POST /sessions/{session_id}/tools/{tool_name}`
 
 1. API validiert die Session.
-2. Store schreibt `tool.requested` mit Tool-Name und Input.
-3. Registry publiziert das persistierte Event auf dem Event-Bus.
-4. Der `tool-request` Hook reagiert auf das Event.
-5. Der Hook schreibt `tool.started`, fuehrt das Tool aus und speichert erfolgreiches Tool-Output als `tool` Message.
-6. Danach schreibt der Hook `tool.finished`.
-7. Bei Fehlern schreibt der Hook `tool.failed`.
+2. API schreibt `tool.call.requested` mit Tool-Name, Input und `run`.
+3. Ein Tool-Consumer-Plugin kann darauf reagieren, Tool-Events streamen und nach Abschluss `chat.message.tool.created` schreiben.
 
-Die API gibt nur `accepted` und das `tool.requested` Event zurueck. Ergebnisse kommen ueber `GET /messages` oder den Event-Stream.
+Die API gibt nur `accepted` und das `tool.call.requested` Event zurueck. Ergebnisse kommen ueber `GET /messages` oder den Event-Stream.
 
 ## Plugin-Modell
 
@@ -122,7 +114,7 @@ Die referenzierte Funktion bekommt die Registry:
 def register(registry):
     registry.add_provider(MyProvider())
     registry.add_tool(MyTool())
-    registry.add_hook(MyHook())
+    registry.add_event_consumer_plugin(MyConsumer())
 ```
 
 ### LLMProvider
@@ -147,21 +139,19 @@ class Tool(Protocol):
         ...
 ```
 
-Ein Tool erhaelt Session-Kontext, Tool-Namen und beliebiges JSON-kompatibles Input. Das Ergebnis wird als `tool` Message gespeichert; Metadaten landen in `metadata_json`.
+Ein Tool erhaelt Session-Kontext, Tool-Namen und beliebiges JSON-kompatibles Input. Die Tool-Ausfuehrung wird ueber Event-Consumer-Plugins aus `tool.call.requested` abgeleitet.
 
-### DatabaseHook
+### EventConsumerPlugin
 
 ```python
-class DatabaseHook(Protocol):
+class EventConsumerPlugin(Protocol):
     name: str
 
-    async def on_event(self, event: Event, *, store: Store, bus: EventBus, registry: Registry) -> None:
+    def install_event_consumers(self, *, app: FastAPI, bus: EventBus, registry: Registry) -> None:
         ...
 ```
 
-Hooks werden nach Store-Operationen aufgerufen. Die Datenbanktransaktion ist zu diesem Zeitpunkt abgeschlossen. Hooks duerfen asynchron sein oder synchron `None` zurueckgeben. Sie bekommen Store, Event-Bus und Registry explizit als Kontext.
-
-Standardmaessig laufen Hooks als Hintergrundtasks. Fuer Tests kann `HARNESS_WORKERS_INLINE=1` gesetzt werden, dann wartet die API auf Hooks.
+Fuer einfache Event-Consumer steht `llm_harness.core.consumer.EventConsumer` bereit. Ein Plugin definiert `subscriber`, `event_filter` und `process_event`; Replay, Subscribe und Ack passieren in der Basisklasse.
 
 ### ApiPlugin
 
@@ -169,11 +159,11 @@ Standardmaessig laufen Hooks als Hintergrundtasks. Fuer Tests kann `HARNESS_WORK
 class ApiPlugin(Protocol):
     name: str
 
-    def install_api(self, *, app: FastAPI, store: Store, bus: EventBus, registry: Registry) -> None:
+    def install_api(self, *, app: FastAPI, bus: EventBus, registry: Registry) -> None:
         ...
 ```
 
-Ein API-Plugin darf FastAPI-Routen installieren und eigene Datenbankschemata initialisieren. Der aktuelle Store wird uebergeben, damit Plugin-Tabellen dieselbe SQLite-Datei nutzen koennen.
+Ein API-Plugin darf FastAPI-Routen installieren und eigene Tabellen ueber `bus.conn` initialisieren.
 
 ## Eingebaute Provider
 
@@ -277,85 +267,36 @@ Anders als RFC-8628-Device-Code-Flows liefert das Polling nicht direkt Tokens, s
 
 ## Datenbankschema
 
-SQLite wird im WAL-Modus betrieben. Zeitstempel werden als ISO-8601 Text gespeichert.
-
-### `sessions`
-
-| Spalte | Typ | Null | Default | Bedeutung |
-| --- | --- | --- | --- | --- |
-| `id` | `INTEGER` | Nein | `AUTOINCREMENT` | Primaerschluessel der Chat-Session. |
-| `title` | `TEXT` | Ja | `NULL` | Optionaler Anzeigename der Session. |
-| `tags_json` | `TEXT` | Nein | keiner | JSON-Array normalisierter Tags. |
-| `created_at` | `TEXT` | Nein | keiner | Erstellzeitpunkt als ISO-8601 UTC-String. |
-| `updated_at` | `TEXT` | Nein | keiner | Letzte Aktualisierung als ISO-8601 UTC-String. |
-
-DDL:
-
-```sql
-CREATE TABLE IF NOT EXISTS sessions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT,
-  tags_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-```
-
-### `messages`
-
-| Spalte | Typ | Null | Default | Bedeutung |
-| --- | --- | --- | --- | --- |
-| `id` | `INTEGER` | Nein | `AUTOINCREMENT` | Primaerschluessel der Message. |
-| `session_id` | `INTEGER` | Nein | keiner | Fremdschluessel auf `sessions.id`. |
-| `role` | `TEXT` | Nein | keiner | Eine Rolle aus `system`, `user`, `assistant`, `tool`. |
-| `content` | `TEXT` | Nein | keiner | Nachrichteninhalt oder Tool-Output. |
-| `provider` | `TEXT` | Ja | `NULL` | Provider-Name fuer LLM-bezogene Messages. |
-| `model` | `TEXT` | Ja | `NULL` | Modellname fuer LLM-bezogene Messages. |
-| `metadata_json` | `TEXT` | Nein | keiner | JSON-Objekt fuer Tool-Metadaten oder spaetere Erweiterungen. |
-| `created_at` | `TEXT` | Nein | keiner | Erstellzeitpunkt als ISO-8601 UTC-String. |
-
-DDL:
-
-```sql
-CREATE TABLE IF NOT EXISTS messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  provider TEXT,
-  model TEXT,
-  metadata_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_session_created
-  ON messages(session_id, created_at);
-```
+SQLite wird im WAL-Modus betrieben. Core-Zustand liegt im Eventlog; Sessions und Messages werden aus Events projiziert.
 
 ### `events`
 
 | Spalte | Typ | Null | Default | Bedeutung |
 | --- | --- | --- | --- | --- |
-| `id` | `INTEGER` | Nein | `AUTOINCREMENT` | Primaerschluessel des Events. |
-| `session_id` | `INTEGER` | Ja | `NULL` | Optionaler Fremdschluessel auf `sessions.id`. |
-| `type` | `TEXT` | Nein | keiner | Event-Typ, z. B. `message.created`. |
+| `id` | `INTEGER` | Nein | keiner | Monotone Millisekunden-ID, vom EventService vergeben. |
+| `name` | `TEXT` | Nein | keiner | Event-Name, z. B. `chat.message.user.created`. |
 | `payload_json` | `TEXT` | Nein | keiner | JSON-Objekt mit Event-spezifischen Daten. |
-| `created_at` | `TEXT` | Nein | keiner | Erstellzeitpunkt als ISO-8601 UTC-String. |
+| `created_at_ms` | `INTEGER` | Nein | keiner | Erstellzeitpunkt in Millisekunden. |
+| `producer` | `TEXT` | Ja | `NULL` | Schreibende Komponente. |
+| `causation_id` | `INTEGER` | Ja | `NULL` | Direkt ausloesendes Event. |
+| `correlation_id` | `INTEGER` | Ja | `NULL` | Root-Event eines Workflows. |
+| `durable` | `INTEGER` | Nein | `1` | Ob das Event persistiert wurde. |
 
-DDL:
+### `event_tags`
 
-```sql
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
-  type TEXT NOT NULL,
-  payload_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
+| Spalte | Typ | Null | Default | Bedeutung |
+| --- | --- | --- | --- | --- |
+| `event_id` | `INTEGER` | Nein | keiner | Fremdschluessel auf `events.id`. |
+| `tag` | `TEXT` | Nein | keiner | Tag-Name, z. B. `session`, `provider`, `run`. |
+| `value` | `TEXT` | Nein | keiner | Tag-Wert. |
 
-CREATE INDEX IF NOT EXISTS idx_events_session_created
-  ON events(session_id, created_at);
-```
+### `event_subscriptions`
+
+| Spalte | Typ | Null | Default | Bedeutung |
+| --- | --- | --- | --- | --- |
+| `subscriber` | `TEXT` | Nein | keiner | Stabiler Consumer-Name. |
+| `last_acked_event_id` | `INTEGER` | Nein | `0` | Zuletzt erfolgreich verarbeitetes Event. |
+| `updated_at_ms` | `INTEGER` | Nein | keiner | Aktualisierungszeitpunkt in Millisekunden. |
 
 ### `oauth_states`
 
@@ -456,12 +397,14 @@ CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_provider
 
 | Typ | Ausloeser | Payload |
 | --- | --- | --- |
-| `session.created` | Neue Session wurde gespeichert. | `{"tags": [...]}` |
-| `message.created` | User-, Assistant- oder Tool-Message wurde gespeichert. | `{"message_id": ..., "role": ..., "provider": ..., "model": ...}` |
-| `tool.requested` | API oder Plugin fordert Tool-Ausfuehrung an. | `{"tool": ..., "input": {...}}` |
-| `tool.started` | Tool-Aufruf beginnt. | `{"tool": ...}` |
-| `tool.finished` | Tool-Aufruf war erfolgreich. | `{"tool": ..., "message_id": ..., "metadata": {...}}` |
-| `tool.failed` | Tool-Aufruf ist fehlgeschlagen. | `{"tool": ..., "error": ...}` |
+| `session.created` | Neue Session wurde erzeugt. | `{"title": ..., "tags": [...]}` |
+| `chat.message.user.created` | User-Message wurde geschrieben. | `{"content": ..., "metadata": {...}}` |
+| `llm.run.requested` | LLM-Lauf wurde fuer eine User-Message angefordert. | `{"provider": ..., "model": ..., "run_id": ...}` |
+| `llm.run.started` | Provider-Aufruf beginnt. | `{"provider": ..., "model": ..., "run_id": ...}` |
+| `llm.delta` | Provider liefert Textfragment. | `{"delta": ..., "sequence": ...}` |
+| `chat.message.assistant.created` | Assistant-Message wurde final gespeichert. | `{"content": ..., "provider": ..., "model": ..., "run_id": ...}` |
+| `tool.call.requested` | API oder Plugin fordert Tool-Ausfuehrung an. | `{"tool": ..., "input": {...}, "run_id": ...}` |
+| `chat.message.tool.created` | Tool-Output wurde als Message geschrieben. | `{"content": ..., "tool": ..., "run_id": ...}` |
 
 Provider-Streaming-Events:
 
@@ -478,7 +421,6 @@ Runtime-Konfiguration kommt aus Umgebungsvariablen:
 
 | Variable | Bedeutung | Default |
 | --- | --- | --- |
-| `HARNESS_DB` | SQLite-Datei | `.harness/harness.db` |
 | `HARNESS_EVENTS_DB` | SQLite-Datei fuer die Eventing Engine | `.harness/events.db` |
 | `HARNESS_HOST` | Uvicorn Bind Host | `127.0.0.1` |
 | `HARNESS_PORT` | Uvicorn Bind Port | `8000` |
@@ -524,7 +466,6 @@ Wichtige Optionen:
 | `package` | Package | Zu startendes Harness-Paket. |
 | `host` | String | Bind Host. |
 | `port` | Port | Bind Port. |
-| `databasePath` | String | SQLite-Pfad. |
 | `eventDatabasePath` | String | SQLite-Pfad fuer die Eventing Engine. |
 | `openaiBaseUrl` | String | Base URL fuer `openai-codex`. |
 | `openrouterBaseUrl` | String | Base URL fuer `openrouter`. |
@@ -554,9 +495,9 @@ Plugins werden ueber `services."llm-harness".plugins` als Python-Packages eingeb
 ## Bewusste Grenzen des aktuellen MVP
 
 - Keine Datenbankmigrationen; `init_schema()` legt nur fehlende Tabellen/Indizes an.
-- Tags sind als JSON-Array in `sessions.tags_json` gespeichert. Das ist einfach, aber fuer komplexe Tag-Abfragen weniger effizient als eine normalisierte Join-Tabelle.
+- Session- und Routing-Tags liegen in `event_tags`; hoehere State-Views sind derzeit einfache Replay-Projektionen.
 - Streaming-Deltas werden erst nach erfolgreichem Abschluss als Assistant-Message gespeichert. Teilantworten ueberleben aktuell keinen Prozessabbruch.
-- Hooks laufen inline und haben keine Retry-/Queue-Semantik.
+- Event-Consumer haben persistente Ack-Cursor, aber noch keine Backoff-/Dead-letter-Semantik.
 - SQLite-Verbindung ist pro Prozess und `check_same_thread=False`; fuer hoeheren Parallelismus waere ein expliziter Connection-/Transaction-Ansatz sinnvoll.
 - Podman-Container-Lifecycle kennt aktuell Start-on-demand, aber kein automatisches Aufraeumen.
 - Plugin-Konfiguration erfolgt derzeit ueber Paketinstallation und Environment, nicht ueber eine eigene Plugin-Konfigurationsdatenbank.

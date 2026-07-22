@@ -6,7 +6,6 @@ from llm_harness.api import create_app
 
 
 def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatch):
-    monkeypatch.setenv("HARNESS_DB", str(tmp_path / "harness.db"))
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())
 
@@ -27,7 +26,6 @@ def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatc
 
 
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):
-    monkeypatch.setenv("HARNESS_DB", str(tmp_path / "harness.db"))
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())
 
@@ -52,7 +50,6 @@ def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monk
 
 
 def test_api_creates_model_selection_event(tmp_path, monkeypatch):
-    monkeypatch.setenv("HARNESS_DB", str(tmp_path / "harness.db"))
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())
 
@@ -71,7 +68,6 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
 
 
 def test_api_creates_tool_request_event(tmp_path, monkeypatch):
-    monkeypatch.setenv("HARNESS_DB", str(tmp_path / "harness.db"))
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())
 

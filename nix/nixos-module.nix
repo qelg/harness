@@ -35,12 +35,6 @@ in
       description = "TCP port for uvicorn to bind.";
     };
 
-    databasePath = lib.mkOption {
-      type = lib.types.str;
-      default = "/var/lib/llm-harness/harness.db";
-      description = "SQLite database path used by the harness.";
-    };
-
     eventDatabasePath = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/llm-harness/events.db";
@@ -236,7 +230,6 @@ in
         {
           HARNESS_HOST = cfg.host;
           HARNESS_PORT = toString cfg.port;
-          HARNESS_DB = toString cfg.databasePath;
           HARNESS_EVENTS_DB = toString cfg.eventDatabasePath;
           HARNESS_OPENAI_BASE_URL = cfg.openaiBaseUrl;
           HARNESS_OPENROUTER_BASE_URL = cfg.openrouterBaseUrl;

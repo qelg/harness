@@ -6,10 +6,10 @@ Ein kleines, erweiterbares Harness fuer session-isolierte LLM-Chats.
 
 - LLM-Provider als Plugins: eingebaut sind `openai-codex`, `openrouter` und `mock-llm`.
 - Tools als Plugins: eingebaut ist `podman-shell`.
-- Sessions mit Tags, persistent in SQLite.
-- Messages und Events persistent in SQLite.
+- Sessions mit Tags als persistente Events in SQLite.
+- Messages und Workflow-Zustand als persistente Events in SQLite.
 - Streaming-Antworten via Server-Sent Events.
-- Datenbank-Hooks, die nach Zustandsaenderungen reagieren koennen.
+- Event-Consumer-Plugins, die auf EventFilter reagieren koennen.
 - Tool-Ausfuehrung session-isoliert in Podman-Containern oder tag-basiert in geteilten Containern.
 
 ## Start
@@ -23,8 +23,7 @@ export HARNESS_OPENROUTER_API_KEY=...
 uvicorn llm_harness.api:create_app --factory --reload
 ```
 
-Die SQLite-Datei liegt standardmaessig unter `.harness/harness.db`.
-Die Eventing Engine nutzt eine eigene SQLite-Datei unter `.harness/events.db`.
+Die Eventing Engine nutzt standardmaessig eine SQLite-Datei unter `.harness/events.db`.
 
 ## Beispiel
 
@@ -37,7 +36,7 @@ curl -X POST http://127.0.0.1:8000/sessions \
 ```bash
 curl -X POST http://127.0.0.1:8000/sessions/1/messages \
   -H 'content-type: application/json' \
-  -d '{"provider":"openrouter","model":"openai/gpt-4.1-mini","content":"Sag kurz hallo"}'
+  -d '{"content":"Sag kurz hallo"}'
 ```
 
 Optional koennen Events fuer eine Session gestreamt werden:
@@ -61,13 +60,13 @@ Externe Python-Pakete registrieren Plugins ueber Entry Points:
 my_plugin = "my_package.plugin:register"
 ```
 
-Die `register(registry)`-Funktion kann Provider, Tools und Hooks registrieren:
+Die `register(registry)`-Funktion kann Provider, Tools, API-Plugins und Event-Consumer registrieren:
 
 ```python
 def register(registry):
     registry.add_provider(MyProvider())
     registry.add_tool(MyTool())
-    registry.add_hook(MyHook())
+    registry.add_event_consumer_plugin(MyConsumer())
 ```
 
 Siehe `llm_harness/protocols.py` fuer die minimalen Interfaces.
@@ -105,7 +104,7 @@ Im NixOS-Modul ist das der Default: `podmanImagePackage` wird vor Service-Start 
 ```bash
 curl -X POST http://127.0.0.1:8000/sessions/1/messages \
   -H 'content-type: application/json' \
-  -d '{"provider":"mock-llm","model":"test","content":"Hallo"}'
+  -d '{"content":"Hallo"}'
 ```
 
 Die Antwort ist ueber `HARNESS_MOCK_LLM_RESPONSE` konfigurierbar, Default ist `mock llm response`.
@@ -128,7 +127,7 @@ Die Harness kann als Flake-Input eingebunden werden:
             enable = true;
             host = "127.0.0.1";
             port = 8000;
-            databasePath = "/var/lib/llm-harness/harness.db";
+            eventDatabasePath = "/var/lib/llm-harness/events.db";
             environmentFile = "/run/secrets/llm-harness.env";
 
             tagContainerMap = {

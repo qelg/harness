@@ -23,7 +23,7 @@ class LlmRunRequesterPlugin(EventConsumer):
     def __init__(self, *, settings: Settings):
         self.settings = settings
 
-    async def process_event(self, bus: EventBus, event: EventRecord, *, store: Any = None, registry: Any = None) -> None:
+    async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
         if await self._already_requested(bus, event):
             return
 
