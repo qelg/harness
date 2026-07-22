@@ -15,6 +15,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -34,6 +35,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   border: 1px solid #c7d0d8;
   border-radius: 6px;
@@ -69,6 +71,10 @@ textarea {
   justify-content: space-between;
   min-height: 74px;
   padding: 1rem;
+}
+
+.chat-header {
+  gap: 1rem;
 }
 
 h1,
@@ -196,6 +202,26 @@ p {
   padding: 1rem;
 }
 
+.model-form {
+  align-items: end;
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: minmax(130px, 160px) minmax(160px, 240px) auto;
+  max-width: 560px;
+}
+
+.model-form label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.model-form span {
+  color: #64717d;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .status {
   color: #9a3412;
   font-size: 0.86rem;
@@ -215,5 +241,15 @@ p {
 
   .message-form {
     grid-template-columns: 1fr;
+  }
+
+  .chat-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .model-form {
+    grid-template-columns: 1fr;
+    max-width: none;
   }
 }

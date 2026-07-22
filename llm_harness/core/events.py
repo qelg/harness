@@ -285,12 +285,12 @@ class EventService:
             sql += f" AND name IN ({placeholders})"
             params.extend(sorted(event_filter.names))
         sql += " ORDER BY id ASC"
-        if limit is not None:
-            sql += " LIMIT ?"
-            params.append(limit)
 
         records = [_event_from_row(self._conn, row) for row in self._conn.execute(sql, params).fetchall()]
-        return [event for event in records if event_filter.matches(event)]
+        matched = [event for event in records if event_filter.matches(event)]
+        if limit is None:
+            return matched
+        return matched[:limit]
 
     def ack(self, subscriber: str, event_id: int) -> None:
         now = _epoch_ms()

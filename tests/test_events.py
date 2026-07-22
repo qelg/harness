@@ -54,6 +54,20 @@ def test_core_event_required_tags_are_enforced(tmp_path):
         raise AssertionError("expected missing required tag error")
 
 
+def test_replay_applies_limit_after_tag_filtering(tmp_path):
+    service = EventService(tmp_path / "events.db")
+
+    asyncio.run(service.append("session.created", {"title": "one"}, tags={"session": "1"}))
+    expected = asyncio.run(service.append("session.created", {"title": "two"}, tags={"session": "2"}))
+
+    replayed = service.replay(
+        EventFilter(names=frozenset({"session.created"}), tags={"session": "2"}),
+        limit=1,
+    )
+
+    assert replayed == [expected]
+
+
 def test_subscribe_filters_by_tag(tmp_path):
     asyncio.run(_assert_subscribe_filters_by_tag(tmp_path))
 

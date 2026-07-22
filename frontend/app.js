@@ -2,7 +2,9 @@ const apiBase = new URLSearchParams(window.location.search).get("api") || "";
 
 const state = {
   sessions: [],
+  providers: [],
   selectedSessionId: null,
+  modelSelection: null,
 };
 
 const els = {
@@ -13,6 +15,10 @@ const els = {
   sessionTags: document.querySelector("#sessionTags"),
   chatTitle: document.querySelector("#chatTitle"),
   chatMeta: document.querySelector("#chatMeta"),
+  modelForm: document.querySelector("#modelForm"),
+  providerSelect: document.querySelector("#providerSelect"),
+  modelName: document.querySelector("#modelName"),
+  saveModel: document.querySelector("#saveModel"),
   messages: document.querySelector("#messages"),
   messageForm: document.querySelector("#messageForm"),
   messageContent: document.querySelector("#messageContent"),
@@ -21,9 +27,22 @@ const els = {
 
 els.refreshSessions.addEventListener("click", () => loadSessions());
 els.createSessionForm.addEventListener("submit", createSession);
+els.modelForm.addEventListener("submit", saveModelSelection);
 els.messageForm.addEventListener("submit", sendMessage);
 
+await loadProviders();
 await loadSessions();
+
+async function loadProviders() {
+  try {
+    const payload = await request("/providers");
+    state.providers = payload.providers || [];
+    renderProviderOptions();
+  } catch (error) {
+    state.providers = [];
+    renderProviderOptions();
+  }
+}
 
 async function loadSessions() {
   setSessionsStatus("Loading sessions...");
@@ -67,10 +86,45 @@ async function selectSession(sessionId) {
   renderSessions();
   const session = state.sessions.find((item) => item.id === sessionId);
   els.chatTitle.textContent = session?.title || sessionId;
-  els.chatMeta.textContent = session?.tags?.length ? session.tags.join(", ") : sessionId;
+  els.chatMeta.textContent = "Loading model...";
   els.messageContent.disabled = false;
   els.sendMessage.disabled = false;
+  els.providerSelect.disabled = false;
+  els.modelName.disabled = false;
+  els.saveModel.disabled = false;
+  await loadModelSelection();
   await loadMessages();
+}
+
+async function loadModelSelection() {
+  if (!state.selectedSessionId) {
+    state.modelSelection = null;
+    return;
+  }
+  state.modelSelection = await request(`/sessions/${encodeURIComponent(state.selectedSessionId)}/model-selection`);
+  renderModelSelection();
+}
+
+async function saveModelSelection(event) {
+  event.preventDefault();
+  if (!state.selectedSessionId) {
+    return;
+  }
+  const provider = els.providerSelect.value.trim();
+  const model = els.modelName.value.trim();
+  if (!provider || !model) {
+    return;
+  }
+  els.saveModel.disabled = true;
+  try {
+    await request("/model-selection", {
+      method: "POST",
+      body: JSON.stringify({ provider, model, session_id: state.selectedSessionId }),
+    });
+    await loadModelSelection();
+  } finally {
+    els.saveModel.disabled = false;
+  }
 }
 
 async function loadMessages() {
@@ -133,6 +187,40 @@ function renderSessions() {
   }
 }
 
+function renderProviderOptions() {
+  const values = state.providers.length > 0 ? state.providers : ["mock-llm"];
+  els.providerSelect.innerHTML = values
+    .map((provider) => `<option value="${escapeHtml(provider)}">${escapeHtml(provider)}</option>`)
+    .join("");
+}
+
+function renderModelSelection() {
+  const session = state.sessions.find((item) => item.id === state.selectedSessionId);
+  const tags = session?.tags?.length ? session.tags.join(", ") : state.selectedSessionId;
+  const selection = state.modelSelection;
+  if (!selection) {
+    els.chatMeta.textContent = tags || "No model selected";
+    return;
+  }
+  ensureProviderOption(selection.provider);
+  els.providerSelect.value = selection.provider;
+  els.modelName.value = selection.model;
+  els.chatMeta.textContent = `${selection.provider} / ${selection.model} (${selection.scope})`;
+  if (tags && tags !== state.selectedSessionId) {
+    els.chatMeta.textContent += ` · ${tags}`;
+  }
+}
+
+function ensureProviderOption(provider) {
+  if ([...els.providerSelect.options].some((option) => option.value === provider)) {
+    return;
+  }
+  const option = document.createElement("option");
+  option.value = provider;
+  option.textContent = provider;
+  els.providerSelect.append(option);
+}
+
 function renderMessages(messages) {
   if (messages.length === 0) {
     els.messages.innerHTML = `<div class="empty">No messages yet.</div>`;
@@ -159,6 +247,10 @@ function renderEmptyChat() {
   els.chatMeta.textContent = "No session selected";
   els.messageContent.disabled = true;
   els.sendMessage.disabled = true;
+  els.providerSelect.disabled = true;
+  els.modelName.disabled = true;
+  els.saveModel.disabled = true;
+  els.modelName.value = "";
   els.messages.innerHTML = `<div class="empty">Create or select a session.</div>`;
 }
 

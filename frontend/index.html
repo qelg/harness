@@ -32,6 +32,17 @@
             <h2 id="chatTitle">Select a session</h2>
             <p id="chatMeta">No session selected</p>
           </div>
+          <form id="modelForm" class="model-form">
+            <label>
+              <span>Provider</span>
+              <select id="providerSelect" disabled></select>
+            </label>
+            <label>
+              <span>Model</span>
+              <input id="modelName" placeholder="model" autocomplete="off" disabled />
+            </label>
+            <button id="saveModel" type="submit" disabled>Save</button>
+          </form>
         </header>
 
         <div id="messages" class="messages" aria-live="polite"></div>

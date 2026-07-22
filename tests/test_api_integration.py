@@ -59,6 +59,22 @@ def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monk
     assert messages[0]["event_name"] == "chat.message.user.created"
 
 
+def test_api_lists_messages_for_later_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    first = client.post("/sessions", json={"title": "first"}).json()
+    second = client.post("/sessions", json={"title": "second"}).json()
+
+    sessions = client.get("/sessions").json()
+    assert [session["id"] for session in sessions] == [first["id"], second["id"]]
+
+    response = client.get(f"/sessions/{second['id']}/messages")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
 def test_api_creates_model_selection_event(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())
@@ -75,6 +91,38 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
     assert event["tags"]["session"] == session_id
     assert event["tags"]["provider"] == "openrouter"
     assert event["tags"]["model"] == "anthropic/claude"
+
+
+def test_api_returns_effective_model_selection(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    monkeypatch.setenv("HARNESS_DEFAULT_PROVIDER", "mock-llm")
+    monkeypatch.setenv("HARNESS_DEFAULT_MODEL", "default-model")
+    client = TestClient(create_app())
+
+    session_id = client.post("/sessions", json={"title": "model-test"}).json()["id"]
+
+    default_response = client.get(f"/sessions/{session_id}/model-selection")
+    assert default_response.status_code == 200
+    assert default_response.json()["provider"] == "mock-llm"
+    assert default_response.json()["model"] == "default-model"
+    assert default_response.json()["scope"] == "default"
+
+    client.post("/model-selection", json={"provider": "openrouter", "model": "global-model"})
+    global_response = client.get(f"/sessions/{session_id}/model-selection")
+    assert global_response.status_code == 200
+    assert global_response.json()["provider"] == "openrouter"
+    assert global_response.json()["model"] == "global-model"
+    assert global_response.json()["scope"] == "global"
+
+    client.post(
+        "/model-selection",
+        json={"provider": "mock-llm", "model": "session-model", "session_id": session_id},
+    )
+    session_response = client.get(f"/sessions/{session_id}/model-selection")
+    assert session_response.status_code == 200
+    assert session_response.json()["provider"] == "mock-llm"
+    assert session_response.json()["model"] == "session-model"
+    assert session_response.json()["scope"] == "session"
 
 
 def test_api_creates_tool_request_event(tmp_path, monkeypatch):

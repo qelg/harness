@@ -77,6 +77,11 @@ class HarnessApiPlugin:
             )
             return _dump_bus_payload(event)
 
+        @app.get("/sessions/{session_id}/model-selection")
+        async def get_session_model_selection(session_id: str) -> dict[str, Any]:
+            _require_session_event(bus, session_id)
+            return _model_selection_for(bus, session_id, settings=self.settings)
+
         @app.post("/sessions")
         async def create_session(request: CreateSessionRequest) -> dict[str, Any]:
             session_id = new_session_id()
@@ -200,6 +205,41 @@ def _message_from_event(event: BusEvent) -> dict[str, Any]:
         "run_id": event.payload.get("run_id"),
         "metadata": event.payload.get("metadata", {}),
         "event_name": event.name,
+        "created_at_ms": event.created_at_ms,
+    }
+
+
+def _model_selection_for(bus: EventBus, session_id: str, *, settings: Settings) -> dict[str, Any]:
+    selected = bus.replay(EventFilter(names=frozenset({ModelSelected.name})))
+    session_event: BusEvent | None = None
+    global_event: BusEvent | None = None
+    for event in selected:
+        if event.tags.get("session") == session_id:
+            session_event = event
+        elif "session" not in event.tags:
+            global_event = event
+
+    if session_event is not None:
+        return _model_selection_from_event(session_event, scope="session")
+    if global_event is not None:
+        return _model_selection_from_event(global_event, scope="global")
+    return {
+        "provider": settings.default_provider,
+        "model": settings.default_model,
+        "scope": "default",
+        "session_id": session_id,
+        "event_id": None,
+        "created_at_ms": None,
+    }
+
+
+def _model_selection_from_event(event: BusEvent, *, scope: str) -> dict[str, Any]:
+    return {
+        "provider": event.tags["provider"],
+        "model": event.tags["model"],
+        "scope": scope,
+        "session_id": event.tags.get("session"),
+        "event_id": event.id,
         "created_at_ms": event.created_at_ms,
     }
 
