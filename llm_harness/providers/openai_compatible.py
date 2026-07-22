@@ -51,6 +51,7 @@ class OpenAICompatibleProvider:
         payload = {
             "model": model,
             "stream": True,
+            "stream_options": {"include_usage": True},
             "messages": [{"role": message.role.value, "content": message.content} for message in messages],
         }
         if tools:
@@ -77,10 +78,7 @@ class OpenAICompatibleProvider:
                 json=payload,
             ) as response:
                 response.raise_for_status()
-                chunks: list[dict] = []
-                message = {"role": "assistant", "content": "", "tool_calls": []}
-                usage = None
-                finish_reason = None
+                accumulator = _ChatCompletionAccumulator(provider=self.name, model=model)
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -88,29 +86,19 @@ class OpenAICompatibleProvider:
                     if data == "[DONE]":
                         break
                     chunk = json.loads(data)
-                    chunks.append(chunk)
+                    accumulator.add(chunk)
                     if self.log_provider_events:
                         logger.info("%s event %s", self.name, json.dumps(chunk, sort_keys=True))
-                    choice = chunk["choices"][0]
-                    finish_reason = choice.get("finish_reason") or finish_reason
-                    usage = chunk.get("usage") or usage
-                    delta = choice.get("delta", {})
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
                     content = delta.get("content")
                     if content:
-                        message["content"] += content
                         yield ProviderStreamEvent(type="delta", delta=content, raw_event=chunk)
-                    _merge_tool_calls(message["tool_calls"], delta.get("tool_calls") or [])
                 yield ProviderStreamEvent(
                     type="completed",
-                    response={
-                        "object": "chat.completion",
-                        "provider": self.name,
-                        "model": model,
-                        "message": message,
-                        "usage": usage,
-                        "finish_reason": finish_reason,
-                        "chunks": chunks,
-                    },
+                    response=accumulator.response(include_chunks=self.log_provider_events),
                 )
 
 
@@ -142,3 +130,71 @@ def _merge_tool_calls(target: list[dict], deltas: list[dict]) -> None:
             call.setdefault("function", {})["arguments"] = (
                 call.setdefault("function", {}).get("arguments", "") + function["arguments"]
             )
+
+
+class _ChatCompletionAccumulator:
+    def __init__(self, *, provider: str, model: str) -> None:
+        self.provider = provider
+        self.model = model
+        self.chunks: list[dict] = []
+        self.response_fields: dict = {}
+        self.choices: dict[int, dict] = {}
+        self.usage = None
+
+    def add(self, chunk: dict) -> None:
+        self.chunks.append(chunk)
+        for key in ("id", "object", "created", "model", "system_fingerprint"):
+            if chunk.get(key) is not None:
+                self.response_fields[key] = chunk[key]
+        if chunk.get("usage") is not None:
+            self.usage = chunk["usage"]
+
+        for choice_chunk in chunk.get("choices") or []:
+            index = int(choice_chunk.get("index", 0))
+            choice = self.choices.setdefault(index, {"index": index, "message": {"role": "assistant"}})
+            if choice_chunk.get("finish_reason") is not None:
+                choice["finish_reason"] = choice_chunk["finish_reason"]
+            if choice_chunk.get("native_finish_reason") is not None:
+                choice["native_finish_reason"] = choice_chunk["native_finish_reason"]
+            self._merge_delta(choice["message"], choice_chunk.get("delta") or {})
+
+    def _merge_delta(self, message: dict, delta: dict) -> None:
+        if delta.get("role"):
+            message["role"] = delta["role"]
+        for key in ("content", "reasoning", "reasoning_content", "refusal"):
+            if delta.get(key):
+                message[key] = message.get(key, "") + delta[key]
+        for key in ("reasoning_details", "annotations"):
+            if delta.get(key):
+                message.setdefault(key, []).extend(delta[key])
+        if delta.get("audio"):
+            message["audio"] = delta["audio"]
+        _merge_tool_calls(message.setdefault("tool_calls", []), delta.get("tool_calls") or [])
+
+    def response(self, *, include_chunks: bool = False) -> dict:
+        choices = [self.choices[index] for index in sorted(self.choices)]
+        output = [_clean_message(choice["message"]) for choice in choices]
+        response = {
+            "object": "chat.completion",
+            "provider": self.provider,
+            "model": self.model,
+            **self.response_fields,
+            "choices": choices,
+            "output": output,
+            "usage": self.usage,
+        }
+        if choices:
+            response["message"] = output[0]
+            response["finish_reason"] = choices[0].get("finish_reason")
+            if choices[0].get("native_finish_reason") is not None:
+                response["native_finish_reason"] = choices[0]["native_finish_reason"]
+        if include_chunks:
+            response["stream_chunks"] = self.chunks
+        return response
+
+
+def _clean_message(message: dict) -> dict:
+    cleaned = dict(message)
+    if cleaned.get("tool_calls") == []:
+        cleaned.pop("tool_calls")
+    return cleaned
