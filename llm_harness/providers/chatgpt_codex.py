@@ -73,8 +73,7 @@ class ChatGPTCodexProvider:
                 json=payload,
             ) as response:
                 await _raise_for_status(response)
-                raw_events: list[dict] = []
-                final_response: dict | None = None
+                accumulator = _ResponsesAccumulator()
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -82,9 +81,7 @@ class ChatGPTCodexProvider:
                     if data == "[DONE]":
                         break
                     event = json.loads(data)
-                    raw_events.append(event)
-                    if event.get("type") == "response.completed" and isinstance(event.get("response"), dict):
-                        final_response = event["response"]
+                    accumulator.add(event)
                     if self.settings.log_provider_events:
                         logger.info("chatgpt-codex event %s", json.dumps(event, sort_keys=True))
                     content = _content_from_event(event)
@@ -92,7 +89,7 @@ class ChatGPTCodexProvider:
                         yield ProviderStreamEvent(type="delta", delta=content, raw_event=event)
                 yield ProviderStreamEvent(
                     type="completed",
-                    response=final_response or {"events": raw_events},
+                    response=accumulator.response(),
                 )
 
 
@@ -130,3 +127,85 @@ def _responses_tool(tool: ToolSpec) -> dict:
         "parameters": tool.input_schema,
         "strict": False,
     }
+
+
+class _ResponsesAccumulator:
+    def __init__(self) -> None:
+        self.raw_events: list[dict] = []
+        self.response_data: dict = {}
+        self.output_by_index: dict[int, dict] = {}
+
+    def add(self, event: dict) -> None:
+        self.raw_events.append(event)
+        if isinstance(event.get("response"), dict):
+            _deep_update(self.response_data, event["response"])
+            for index, item in enumerate(event["response"].get("output") or []):
+                self._merge_output_item(index, item)
+
+        output_index = event.get("output_index")
+        if isinstance(output_index, int):
+            item = event.get("item")
+            if isinstance(item, dict):
+                self._merge_output_item(output_index, item)
+            self._merge_content_part(event, output_index)
+            self._merge_output_text(event, output_index)
+            self._merge_function_arguments(event, output_index)
+
+    def _merge_output_item(self, output_index: int, item: dict) -> dict:
+        current = self.output_by_index.setdefault(output_index, {})
+        _deep_update(current, item)
+        return current
+
+    def _merge_content_part(self, event: dict, output_index: int) -> None:
+        part = event.get("part")
+        content_index = event.get("content_index")
+        if not isinstance(part, dict) or not isinstance(content_index, int):
+            return
+        item = self.output_by_index.setdefault(output_index, {"content": []})
+        content = item.setdefault("content", [])
+        while len(content) <= content_index:
+            content.append({})
+        _deep_update(content[content_index], part)
+
+    def _merge_output_text(self, event: dict, output_index: int) -> None:
+        event_type = event.get("type")
+        if event_type not in {"response.output_text.delta", "response.output_text.done"}:
+            return
+        content_index = event.get("content_index")
+        if not isinstance(content_index, int):
+            content_index = 0
+        item = self.output_by_index.setdefault(output_index, {"type": "message", "content": []})
+        content = item.setdefault("content", [])
+        while len(content) <= content_index:
+            content.append({"type": "output_text", "text": ""})
+        part = content[content_index]
+        part.setdefault("type", "output_text")
+        if event_type == "response.output_text.delta":
+            part["text"] = part.get("text", "") + str(event.get("delta", ""))
+        elif event.get("text") is not None:
+            part["text"] = event["text"]
+
+    def _merge_function_arguments(self, event: dict, output_index: int) -> None:
+        event_type = event.get("type")
+        if event_type not in {"response.function_call_arguments.delta", "response.function_call_arguments.done"}:
+            return
+        item = self.output_by_index.setdefault(output_index, {"type": "function_call"})
+        if event_type == "response.function_call_arguments.delta":
+            item["arguments"] = item.get("arguments", "") + str(event.get("delta", ""))
+        elif event.get("arguments") is not None:
+            item["arguments"] = event["arguments"]
+
+    def response(self) -> dict:
+        combined = dict(self.response_data)
+        if self.output_by_index:
+            combined["output"] = [self.output_by_index[index] for index in sorted(self.output_by_index)]
+        combined["stream_events"] = self.raw_events
+        return combined
+
+
+def _deep_update(target: dict, source: dict) -> None:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = value
