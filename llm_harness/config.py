@@ -31,6 +31,7 @@ class Settings:
     workers_inline: bool
     default_provider: str
     default_model: str
+    default_toolsets: tuple[str, ...]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,6 +60,7 @@ class Settings:
             workers_inline=parse_bool(os.getenv("HARNESS_WORKERS_INLINE", "0")),
             default_provider=os.getenv("HARNESS_DEFAULT_PROVIDER", "mock-llm"),
             default_model=os.getenv("HARNESS_DEFAULT_MODEL", "test-model"),
+            default_toolsets=parse_csv(os.getenv("HARNESS_DEFAULT_TOOLSETS", "default")),
         )
 
 
@@ -76,3 +78,7 @@ def parse_tag_container_map(raw: str) -> dict[str, str]:
 
 def parse_bool(raw: str) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def parse_csv(raw: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in raw.split(",") if item.strip())

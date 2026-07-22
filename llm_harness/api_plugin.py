@@ -41,6 +41,7 @@ class RunToolRequest(BaseModel):
 class SelectModelRequest(BaseModel):
     provider: str
     model: str
+    toolsets: list[str] | None = None
     session_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -64,14 +65,21 @@ class HarnessApiPlugin:
         async def tools() -> dict[str, list[str]]:
             return {"tools": sorted(registry.tools)}
 
+        @app.get("/toolsets")
+        async def toolsets() -> dict[str, list[str]]:
+            return {"toolsets": sorted(registry.toolsets)}
+
         @app.post("/model-selection")
         async def select_model(request: SelectModelRequest) -> dict[str, Any]:
             if request.session_id is not None:
                 _require_session_event(bus, request.session_id)
+            toolsets = request.toolsets if request.toolsets is not None else list(self.settings.default_toolsets)
+            _require_toolsets(registry, toolsets)
             event = await bus.append_message(
                 ModelSelected(
                     provider=request.provider,
                     model=request.model,
+                    toolsets=tuple(toolsets),
                     session_id=request.session_id,
                     metadata=request.metadata,
                 ),
@@ -185,6 +193,12 @@ def _require_session_event(bus: EventBus, session_id: str) -> None:
         raise HTTPException(status_code=404, detail=f"unknown session: {session_id}")
 
 
+def _require_toolsets(registry: Registry, toolsets: list[str]) -> None:
+    unknown = sorted(set(toolsets) - set(registry.toolsets))
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unknown toolset: {', '.join(unknown)}")
+
+
 def _session_from_events(event: BusEvent) -> dict[str, Any]:
     return {
         "id": event.tags["session"],
@@ -250,6 +264,7 @@ def _model_selection_for(bus: EventBus, session_id: str, *, settings: Settings) 
     return {
         "provider": settings.default_provider,
         "model": settings.default_model,
+        "toolsets": list(settings.default_toolsets),
         "scope": "default",
         "session_id": session_id,
         "event_id": None,
@@ -261,6 +276,7 @@ def _model_selection_from_event(event: BusEvent, *, scope: str) -> dict[str, Any
     return {
         "provider": event.tags["provider"],
         "model": event.tags["model"],
+        "toolsets": event.payload.get("toolsets", []),
         "scope": scope,
         "session_id": event.tags.get("session"),
         "event_id": event.id,

@@ -13,6 +13,7 @@ from llm_harness.core.types import (
     LlmRunStarted,
     Message,
     Role,
+    ToolSpec,
 )
 
 
@@ -30,12 +31,28 @@ class LlmProviderRunnerPlugin(EventConsumer):
         run_id = event.tags["run"]
         session_id = event.tags["session"]
         provider = None if registry is None else registry.providers.get(provider_name)
+        toolsets = tuple(event.payload.get("toolsets", ()))
 
         if provider is None:
             await self._fail(
                 bus,
                 event,
                 error=f"unknown provider: {provider_name}",
+                provider_name=provider_name,
+                model=model,
+                run_id=run_id,
+                session_id=session_id,
+                retryable=False,
+            )
+            return
+
+        try:
+            tools = _tools_for_toolsets(registry, toolsets)
+        except ValueError as exc:
+            await self._fail(
+                bus,
+                event,
+                error=str(exc),
                 provider_name=provider_name,
                 model=model,
                 run_id=run_id,
@@ -55,7 +72,7 @@ class LlmProviderRunnerPlugin(EventConsumer):
         try:
             messages = self._messages_for_session(bus, session_id=session_id, before_event_id=event.id)
             sequence = 0
-            async for delta in provider.stream_chat(model=model, messages=messages):
+            async for delta in provider.stream_chat(model=model, messages=messages, tools=tools):
                 sequence += 1
                 content_parts.append(delta)
                 await bus.publish_message_transient(
@@ -153,3 +170,21 @@ def _message_from_event(event: EventRecord) -> Message:
         metadata=event.payload.get("metadata", {}),
         created_at=datetime.fromtimestamp(event.created_at_ms / 1000, timezone.utc),
     )
+
+
+def _tools_for_toolsets(registry: Any, toolsets: tuple[str, ...]) -> list[ToolSpec]:
+    if registry is None:
+        return []
+
+    tools: list[ToolSpec] = []
+    seen: set[str] = set()
+    for toolset_name in toolsets:
+        toolset = registry.toolsets.get(toolset_name)
+        if toolset is None:
+            raise ValueError(f"unknown toolset: {toolset_name}")
+        for tool in toolset.tools(registry=registry):
+            if tool.name in seen:
+                continue
+            seen.add(tool.name)
+            tools.append(tool)
+    return tools

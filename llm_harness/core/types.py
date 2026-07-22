@@ -13,6 +13,7 @@ ROLE = "role"
 PROVIDER = "provider"
 MODEL = "model"
 TOOL = "tool"
+TOOLSET = "toolset"
 RUN = "run"
 
 
@@ -52,6 +53,13 @@ class ToolCall:
 class ToolResult:
     output: str
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    input_schema: dict[str, Any]
 
 
 class CoreEventMessage(Protocol):
@@ -133,6 +141,7 @@ class AssistantMessageCreated:
 class ModelSelected:
     provider: str
     model: str
+    toolsets: tuple[str, ...] = ()
     session_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -142,6 +151,7 @@ class ModelSelected:
         return {
             "provider": self.provider,
             "model": self.model,
+            "toolsets": list(self.toolsets),
             "session_id": self.session_id,
             "metadata": self.metadata,
         }
@@ -160,6 +170,7 @@ class LlmRunRequested:
     provider: str
     model: str
     run_id: str
+    toolsets: tuple[str, ...] = ()
     user_message_event_id: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -170,6 +181,7 @@ class LlmRunRequested:
             "provider": self.provider,
             "model": self.model,
             "run_id": self.run_id,
+            "toolsets": list(self.toolsets),
             "user_message_event_id": self.user_message_event_id,
             "metadata": self.metadata,
         }

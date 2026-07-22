@@ -10,6 +10,23 @@ from llm_harness.core.types import ToolCall, ToolResult
 
 class PodmanShellTool:
     name = "podman-shell"
+    description = "Run a shell command in this session's Podman container."
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "cmd": {
+                "type": "string",
+                "description": "Shell command to execute.",
+            },
+            "timeout": {
+                "type": "number",
+                "description": "Maximum runtime in seconds.",
+                "default": 30,
+            },
+        },
+        "required": ["cmd"],
+        "additionalProperties": False,
+    }
 
     def __init__(self, *, settings: Settings):
         self.settings = settings

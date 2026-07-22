@@ -71,11 +71,17 @@ def test_llm_failed_event_has_run_tags():
 
 def test_model_selection_can_be_global_or_session_scoped():
     global_selection = ModelSelected(provider="mock", model="global")
-    session_selection = ModelSelected(provider="openrouter", model="session-model", session_id="sess_1")
+    session_selection = ModelSelected(
+        provider="openrouter",
+        model="session-model",
+        toolsets=("default",),
+        session_id="sess_1",
+    )
 
     assert global_selection.name == "llm.model.selected"
     assert global_selection.tags() == {"provider": "mock", "model": "global"}
     assert session_selection.tags()["session"] == "sess_1"
+    assert session_selection.payload()["toolsets"] == ["default"]
     assert required_tags_for("llm.model.selected") == frozenset({"provider", "model"})
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, TYPE_CHECKING
 
-from llm_harness.core.types import Message, ToolCall, ToolResult
+from llm_harness.core.types import Message, ToolCall, ToolResult, ToolSpec
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -15,15 +15,30 @@ if TYPE_CHECKING:
 class LLMProvider(Protocol):
     name: str
 
-    async def stream_chat(self, *, model: str, messages: Sequence[Message]) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[str]:
         """Yield assistant text deltas."""
 
 
 class Tool(Protocol):
     name: str
+    description: str
+    input_schema: dict
 
     async def run(self, call: ToolCall) -> ToolResult:
         """Run the tool and return a persisted result payload."""
+
+
+class ToolSet(Protocol):
+    name: str
+
+    def tools(self, *, registry: "Registry") -> Sequence[ToolSpec]:
+        """Return the tool specs this toolset exposes to LLM providers."""
 
 
 class ApiPlugin(Protocol):

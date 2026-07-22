@@ -3,13 +3,14 @@ from __future__ import annotations
 import inspect
 from importlib.metadata import entry_points
 
-from llm_harness.protocols import ApiPlugin, EventConsumerPlugin, LLMProvider, Tool
+from llm_harness.protocols import ApiPlugin, EventConsumerPlugin, LLMProvider, Tool, ToolSet
 
 
 class Registry:
     def __init__(self) -> None:
         self.providers: dict[str, LLMProvider] = {}
         self.tools: dict[str, Tool] = {}
+        self.toolsets: dict[str, ToolSet] = {}
         self.api_plugins: list[ApiPlugin] = []
         self.event_consumer_plugins: list[EventConsumerPlugin] = []
 
@@ -18,6 +19,9 @@ class Registry:
 
     def add_tool(self, tool: Tool) -> None:
         self.tools[tool.name] = tool
+
+    def add_toolset(self, toolset: ToolSet) -> None:
+        self.toolsets[toolset.name] = toolset
 
     def add_api_plugin(self, plugin: ApiPlugin) -> None:
         self.api_plugins.append(plugin)

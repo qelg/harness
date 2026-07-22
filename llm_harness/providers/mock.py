@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 
-from llm_harness.core.types import Message
+from llm_harness.core.types import Message, ToolSpec
 
 
 class MockLLMProvider:
@@ -11,7 +11,13 @@ class MockLLMProvider:
     def __init__(self, *, response: str):
         self.response = response
 
-    async def stream_chat(self, *, model: str, messages: Sequence[Message]) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[str]:
         for chunk in _chunks(self.response):
             yield chunk
 

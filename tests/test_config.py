@@ -14,3 +14,9 @@ def test_settings_reads_event_database_path(monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", "/tmp/events.db")
 
     assert Settings.from_env().event_database_path == Path("/tmp/events.db")
+
+
+def test_settings_reads_default_toolsets(monkeypatch):
+    monkeypatch.setenv("HARNESS_DEFAULT_TOOLSETS", "default, readonly")
+
+    assert Settings.from_env().default_toolsets == ("default", "readonly")

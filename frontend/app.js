@@ -4,6 +4,7 @@ const fallbackProviders = ["chatgpt-codex", "mock-llm", "openrouter", "openai-co
 const state = {
   sessions: [],
   providers: [],
+  toolsets: [],
   selectedSessionId: null,
   modelSelection: null,
 };
@@ -19,6 +20,7 @@ const els = {
   modelForm: document.querySelector("#modelForm"),
   providerSelect: document.querySelector("#providerSelect"),
   modelName: document.querySelector("#modelName"),
+  toolsetsList: document.querySelector("#toolsetsList"),
   saveModel: document.querySelector("#saveModel"),
   modelStatus: document.querySelector("#modelStatus"),
   authStatus: document.querySelector("#authStatus"),
@@ -43,8 +45,10 @@ init().catch((error) => {
 
 async function init() {
   renderProviderOptions();
+  renderToolsetOptions(["default"]);
   setModelStatus("Loading providers...");
   await loadProviders();
+  await loadToolsets();
   await loadChatGPTTokens();
   await loadSessions();
 }
@@ -59,6 +63,17 @@ async function loadProviders() {
     setModelStatus(`Using fallback providers. ${error.message}`);
   }
   renderProviderOptions();
+}
+
+async function loadToolsets() {
+  try {
+    const payload = await request("/toolsets");
+    state.toolsets = payload.toolsets || [];
+  } catch (error) {
+    state.toolsets = ["default"];
+    setModelStatus(`Using fallback toolsets. ${error.message}`);
+  }
+  renderToolsetOptions(state.modelSelection?.toolsets || ["default"]);
 }
 
 async function loadChatGPTTokens() {
@@ -173,13 +188,14 @@ async function saveModelSelection(event) {
   event.preventDefault();
   const provider = els.providerSelect.value.trim();
   const model = els.modelName.value.trim();
+  const toolsets = selectedToolsets();
   if (!provider || !model) {
     setModelStatus("Provider and model are required.");
     return;
   }
   els.saveModel.disabled = true;
   try {
-    const body = { provider, model };
+    const body = { provider, model, toolsets };
     if (state.selectedSessionId) {
       body.session_id = state.selectedSessionId;
     }
@@ -220,15 +236,64 @@ async function sendMessage(event) {
 
   els.messageContent.value = "";
   els.sendMessage.disabled = true;
+  const streamingSessionId = state.selectedSessionId;
+  let streamingMessageId = null;
   try {
-    await request(`/sessions/${encodeURIComponent(state.selectedSessionId)}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content }),
+    appendTransientMessage({
+      id: `pending-user-${Date.now()}`,
+      role: "user",
+      content,
     });
-    await loadMessages();
+    streamingMessageId = appendTransientMessage({
+      id: `pending-assistant-${Date.now()}`,
+      role: "assistant",
+      content: "",
+    });
+    await streamUserMessage(streamingSessionId, content, {
+      onDelta(delta) {
+        appendToMessage(streamingMessageId, delta);
+      },
+      onFailed(message) {
+        replaceMessage(streamingMessageId, message);
+      },
+    });
+    if (state.selectedSessionId === streamingSessionId) {
+      await loadMessages();
+    }
+  } catch (error) {
+    if (streamingMessageId !== null) {
+      replaceMessage(streamingMessageId, {
+        id: streamingMessageId,
+        role: "assistant",
+        content: `Streaming failed: ${error.message}`,
+      });
+    }
   } finally {
     els.sendMessage.disabled = false;
     els.messageContent.focus();
+  }
+}
+
+async function streamUserMessage(sessionId, content, handlers) {
+  const response = await fetch(`${apiBase}/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || `${response.status} ${response.statusText}`);
+  }
+  if (!response.body) {
+    throw new Error("Streaming response is not readable.");
+  }
+
+  for await (const event of readSse(response.body)) {
+    if (event.type === "llm.delta") {
+      handlers.onDelta(event.data.payload?.delta || "");
+    } else if (event.type === "llm.run.failed") {
+      handlers.onFailed(failedRunMessage(event.data));
+    }
   }
 }
 
@@ -268,6 +333,22 @@ function renderProviderOptions() {
   }
 }
 
+function renderToolsetOptions(selectedToolsets = []) {
+  const selected = new Set(selectedToolsets.length ? selectedToolsets : ["default"]);
+  const values = uniqueProviders([...(state.toolsets.length ? state.toolsets : ["default"]), ...selected]);
+  els.toolsetsList.innerHTML = values
+    .map((toolset) => {
+      const checked = selected.has(toolset) ? " checked" : "";
+      return `
+        <label class="toolset-option">
+          <input type="checkbox" value="${escapeHtml(toolset)}"${checked} />
+          <span>${escapeHtml(toolset)}</span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
 function renderDeviceLogin(device) {
   els.deviceLogin.hidden = false;
   els.deviceLogin.innerHTML = `
@@ -289,8 +370,11 @@ function renderModelSelection() {
   ensureProviderOption(selection.provider);
   els.providerSelect.value = selection.provider;
   els.modelName.value = selection.model;
+  renderToolsetOptions(selection.toolsets || ["default"]);
   els.chatMeta.textContent = `${selection.provider} / ${selection.model} (${selection.scope})`;
-  setModelStatus(`Current session uses ${selection.provider} / ${selection.model} from ${selection.scope}.`);
+  setModelStatus(
+    `Current session uses ${selection.provider} / ${selection.model} with ${(selection.toolsets || []).join(", ") || "no"} toolsets from ${selection.scope}.`
+  );
   if (tags && tags !== state.selectedSessionId) {
     els.chatMeta.textContent += ` · ${tags}`;
   }
@@ -310,6 +394,12 @@ function uniqueProviders(providers) {
   return [...new Set(providers.map((provider) => provider.trim()).filter(Boolean))].sort();
 }
 
+function selectedToolsets() {
+  return [...els.toolsetsList.querySelectorAll("input[type='checkbox']:checked")]
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
 function renderMessages(messages) {
   if (messages.length === 0) {
     els.messages.innerHTML = `<div class="empty">No messages yet.</div>`;
@@ -317,18 +407,60 @@ function renderMessages(messages) {
   }
 
   els.messages.innerHTML = messages
-    .map((message) => {
-      const role = escapeHtml(message.role || "event");
-      const content = escapeHtml(message.content || "");
-      return `
-        <article class="message ${role}">
-          <div class="message-role">${role}</div>
-          <div class="message-content">${content}</div>
-        </article>
-      `;
-    })
+    .map((message) => messageHtml(message))
     .join("");
   els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function appendTransientMessage(message) {
+  if (els.messages.querySelector(".empty")) {
+    els.messages.innerHTML = "";
+  }
+  const id = String(message.id);
+  els.messages.insertAdjacentHTML("beforeend", messageHtml({ ...message, id }));
+  els.messages.scrollTop = els.messages.scrollHeight;
+  return id;
+}
+
+function appendToMessage(messageId, delta) {
+  if (!delta) {
+    return;
+  }
+  const node = els.messages.querySelector(`[data-message-id="${cssEscape(messageId)}"] .message-content`);
+  if (!node) {
+    return;
+  }
+  node.textContent += delta;
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function replaceMessage(messageId, message) {
+  const node = els.messages.querySelector(`[data-message-id="${cssEscape(messageId)}"]`);
+  if (!node) {
+    return;
+  }
+  node.outerHTML = messageHtml({ ...message, id: messageId });
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function failedRunMessage(event) {
+  const error = event.payload?.error || "LLM run failed";
+  return {
+    id: event.id,
+    role: "assistant",
+    content: `LLM run failed: ${error}`,
+  };
+}
+
+function messageHtml(message) {
+  const role = escapeHtml(message.role || "event");
+  const content = escapeHtml(message.content || "");
+  return `
+    <article class="message ${role}" data-message-id="${escapeHtml(message.id)}">
+      <div class="message-role">${role}</div>
+      <div class="message-content">${content}</div>
+    </article>
+  `;
 }
 
 function renderEmptyChat() {
@@ -354,6 +486,61 @@ function setAuthStatus(text) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function* readSse(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf("\n\n");
+      while (boundary !== -1) {
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const event = parseSseEvent(rawEvent);
+        if (event) {
+          yield event;
+        }
+        boundary = buffer.indexOf("\n\n");
+      }
+    }
+    buffer += decoder.decode();
+    const event = parseSseEvent(buffer);
+    if (event) {
+      yield event;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function parseSseEvent(rawEvent) {
+  let type = "message";
+  const data = [];
+  for (const line of rawEvent.split("\n")) {
+    if (line.startsWith("event:")) {
+      type = line.slice(6).trim();
+    } else if (line.startsWith("data:")) {
+      data.push(line.slice(5).trimStart());
+    }
+  }
+  if (data.length === 0) {
+    return null;
+  }
+  return { type, data: JSON.parse(data.join("\n")) };
+}
+
+function cssEscape(value) {
+  if (window.CSS && typeof window.CSS.escape === "function") {
+    return window.CSS.escape(String(value));
+  }
+  return String(value).replaceAll('"', '\\"');
 }
 
 async function request(path, options = {}) {

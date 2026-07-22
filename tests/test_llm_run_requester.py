@@ -13,7 +13,7 @@ def test_user_message_requests_llm_run_with_global_model_selection(tmp_path, mon
     bus = EventService(tmp_path / "events.db")
     plugin = LlmRunRequesterPlugin(settings=Settings.from_env())
 
-    asyncio.run(bus.append_message(ModelSelected(provider="mock-llm", model="global-model")))
+    asyncio.run(bus.append_message(ModelSelected(provider="mock-llm", model="global-model", toolsets=("default",))))
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
     user_message = asyncio.run(bus.append_message(UserMessageCreated(session_id="sess_1", content="hello")))
 
@@ -23,6 +23,7 @@ def test_user_message_requests_llm_run_with_global_model_selection(tmp_path, mon
     assert len(requests) == 1
     assert requests[0].tags["provider"] == "mock-llm"
     assert requests[0].tags["model"] == "global-model"
+    assert requests[0].payload["toolsets"] == ["default"]
     assert requests[0].tags["run"].startswith("llm_")
     assert requests[0].payload["user_message_event_id"] == user_message.id
     assert requests[0].causation_id == user_message.id
@@ -44,7 +45,14 @@ def test_session_model_selection_overrides_global_selection(tmp_path, monkeypatc
     asyncio.run(bus.append_message(ModelSelected(provider="mock-llm", model="global-model")))
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
     asyncio.run(
-        bus.append_message(ModelSelected(provider="openrouter", model="session-model", session_id="sess_1"))
+        bus.append_message(
+            ModelSelected(
+                provider="openrouter",
+                model="session-model",
+                toolsets=("default",),
+                session_id="sess_1",
+            )
+        )
     )
     asyncio.run(bus.append_message(UserMessageCreated(session_id="sess_1", content="hello")))
 
@@ -54,6 +62,7 @@ def test_session_model_selection_overrides_global_selection(tmp_path, monkeypatc
     assert len(requests) == 1
     assert requests[0].tags["provider"] == "openrouter"
     assert requests[0].tags["model"] == "session-model"
+    assert requests[0].payload["toolsets"] == ["default"]
 
 
 def test_llm_run_requester_does_not_duplicate_requests(tmp_path, monkeypatch):

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 
 import httpx
 
-from llm_harness.core.types import Message
+from llm_harness.core.types import Message, ToolSpec
 
 
 class OpenAICompatibleProvider:
@@ -22,7 +22,13 @@ class OpenAICompatibleProvider:
         self.api_key = api_key
         self.extra_headers = extra_headers or {}
 
-    async def stream_chat(self, *, model: str, messages: Sequence[Message]) -> AsyncIterator[str]:
+    async def stream_chat(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[str]:
         if not self.api_key:
             raise RuntimeError(f"missing API key for provider {self.name}")
 
@@ -31,6 +37,8 @@ class OpenAICompatibleProvider:
             "stream": True,
             "messages": [{"role": message.role.value, "content": message.content} for message in messages],
         }
+        if tools:
+            payload["tools"] = [_openai_tool(tool) for tool in tools]
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -56,3 +64,14 @@ class OpenAICompatibleProvider:
                     content = delta.get("content")
                     if content:
                         yield content
+
+
+def _openai_tool(tool: ToolSpec) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.input_schema,
+        },
+    }

@@ -13,6 +13,7 @@ from llm_harness.core.types import LlmRunRequested, ModelSelected, new_run_id
 class ModelChoice:
     provider: str
     model: str
+    toolsets: tuple[str, ...]
 
 
 class LlmRunRequesterPlugin(EventConsumer):
@@ -34,6 +35,7 @@ class LlmRunRequesterPlugin(EventConsumer):
                 provider=choice.provider,
                 model=choice.model,
                 run_id=new_run_id("llm"),
+                toolsets=choice.toolsets,
                 user_message_event_id=event.id,
             ),
             producer=self.name,
@@ -56,7 +58,11 @@ class LlmRunRequesterPlugin(EventConsumer):
         global_choice: ModelChoice | None = None
 
         for event in selected:
-            choice = ModelChoice(provider=event.tags["provider"], model=event.tags["model"])
+            choice = ModelChoice(
+                provider=event.tags["provider"],
+                model=event.tags["model"],
+                toolsets=tuple(event.payload.get("toolsets", self.settings.default_toolsets)),
+            )
             if session_id is not None and event.tags.get("session") == session_id:
                 session_choice = choice
             elif "session" not in event.tags:
@@ -65,4 +71,5 @@ class LlmRunRequesterPlugin(EventConsumer):
         return session_choice or global_choice or ModelChoice(
             provider=self.settings.default_provider,
             model=self.settings.default_model,
+            toolsets=self.settings.default_toolsets,
         )

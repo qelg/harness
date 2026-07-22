@@ -9,6 +9,7 @@ import pytest
 
 from llm_harness.api import create_app
 from llm_harness.auth_plugins.token_store import ensure_oauth_schema
+from llm_harness.core.types import Message, Role, ToolSpec
 
 
 def test_chatgpt_codex_provider_requires_login_token(tmp_path, monkeypatch):
@@ -53,10 +54,23 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer access-token"
-        assert request.url.path.endswith("/chat/completions")
+        assert request.url.path.endswith("/responses")
+        payload = json.loads(request.content)
+        assert payload["instructions"] == "You are a helpful coding assistant."
+        assert payload["input"] == [{"role": "user", "content": "hello"}]
+        assert payload["tools"] == [
+            {
+                "type": "function",
+                "name": "echo",
+                "description": "Echo text.",
+                "parameters": {"type": "object"},
+                "strict": False,
+            }
+        ]
+        assert payload["store"] is False
         return httpx.Response(
             200,
-            content=b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n',
+            content=b'data: {"type":"response.output_text.delta","delta":"hi"}\n\ndata: [DONE]\n\n',
             headers={"content-type": "text/event-stream"},
         )
 
@@ -70,6 +84,55 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch):
     provider = app.state.registry.providers["chatgpt-codex"]
 
     async def consume() -> list[str]:
+        message = Message(id=1, session_id="sess_1", role=Role.USER, content="hello")
+        tool = ToolSpec(name="echo", description="Echo text.", input_schema={"type": "object"})
+        return [delta async for delta in provider.stream_chat(model="codex", messages=[message], tools=[tool])]
+
+    assert asyncio.run(consume()) == ["hi"]
+
+
+def test_chatgpt_codex_provider_includes_error_response_body(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    conn = app.state.bus.conn
+    ensure_oauth_schema(conn)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_tokens(
+              provider, subject, access_token, refresh_token, token_type, scope,
+              expires_at, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "openai-codex",
+                "codex-user",
+                "access-token",
+                "refresh-token",
+                "Bearer",
+                "openid",
+                None,
+                json.dumps({"refresh_after": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}),
+                datetime.now(UTC).isoformat(),
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "missing instructions"}})
+
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*args, **kwargs):
+        return original_client(transport=transport, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("llm_harness.providers.chatgpt_codex.httpx.AsyncClient", client_factory)
+    provider = app.state.registry.providers["chatgpt-codex"]
+
+    async def consume() -> list[str]:
         return [delta async for delta in provider.stream_chat(model="codex", messages=[])]
 
-    assert asyncio.run(consume()) == ["hello"]
+    with pytest.raises(RuntimeError, match="missing instructions"):
+        asyncio.run(consume())

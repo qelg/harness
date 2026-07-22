@@ -53,6 +53,12 @@ in
       description = "OpenRouter OpenAI-compatible base URL.";
     };
 
+    defaultToolsets = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ "default" ];
+      description = "Toolsets selected when no session-specific selection event overrides them.";
+    };
+
     chatgptOAuth = {
       authorizationUrl = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -233,6 +239,7 @@ in
           HARNESS_EVENTS_DB = toString cfg.eventDatabasePath;
           HARNESS_OPENAI_BASE_URL = cfg.openaiBaseUrl;
           HARNESS_OPENROUTER_BASE_URL = cfg.openrouterBaseUrl;
+          HARNESS_DEFAULT_TOOLSETS = lib.concatStringsSep "," cfg.defaultToolsets;
           HARNESS_PODMAN_IMAGE = cfg.podmanImage;
           HARNESS_PODMAN_MOUNT_NIX_STORE = if cfg.podmanMountNixStore then "1" else "0";
           HARNESS_TAG_CONTAINER_MAP = tagContainerMapValue;

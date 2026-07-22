@@ -37,7 +37,7 @@ def test_api_serves_frontend(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "LLM Harness" in response.text
     assert "mock-llm" in response.text
-    assert 'src="./app.js?v=4"' in response.text
+    assert 'src="./app.js?v=5"' in response.text
     assert "loginChatGPT" in response.text
 
 
@@ -49,7 +49,10 @@ def test_api_serves_frontend_javascript_that_loads_providers(tmp_path, monkeypat
 
     assert response.status_code == 200
     assert 'request("/providers")' in response.text
+    assert 'request("/toolsets")' in response.text
     assert "function init()" in response.text
+    assert "/messages/stream" in response.text
+    assert "async function* readSse" in response.text
 
 
 def test_api_lists_builtin_providers(tmp_path, monkeypatch):
@@ -60,6 +63,16 @@ def test_api_lists_builtin_providers(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert {"chatgpt-codex", "mock-llm", "openrouter", "openai-codex"}.issubset(set(response.json()["providers"]))
+
+
+def test_api_lists_builtin_toolsets(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.get("/toolsets")
+
+    assert response.status_code == 200
+    assert response.json()["toolsets"] == ["default"]
 
 
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):
@@ -147,6 +160,7 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
     assert event["tags"]["session"] == session_id
     assert event["tags"]["provider"] == "openrouter"
     assert event["tags"]["model"] == "anthropic/claude"
+    assert event["payload"]["toolsets"] == ["default"]
 
 
 def test_api_returns_effective_model_selection(tmp_path, monkeypatch):
@@ -161,6 +175,7 @@ def test_api_returns_effective_model_selection(tmp_path, monkeypatch):
     assert default_response.status_code == 200
     assert default_response.json()["provider"] == "mock-llm"
     assert default_response.json()["model"] == "default-model"
+    assert default_response.json()["toolsets"] == ["default"]
     assert default_response.json()["scope"] == "default"
 
     client.post("/model-selection", json={"provider": "openrouter", "model": "global-model"})
@@ -178,7 +193,23 @@ def test_api_returns_effective_model_selection(tmp_path, monkeypatch):
     assert session_response.status_code == 200
     assert session_response.json()["provider"] == "mock-llm"
     assert session_response.json()["model"] == "session-model"
+    assert session_response.json()["toolsets"] == ["default"]
     assert session_response.json()["scope"] == "session"
+
+
+def test_api_model_selection_accepts_toolsets(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    session_id = client.post("/sessions", json={"title": "toolset-test"}).json()["id"]
+    response = client.post(
+        "/model-selection",
+        json={"provider": "mock-llm", "model": "test-model", "session_id": session_id, "toolsets": ["default"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["payload"]["toolsets"] == ["default"]
+    assert client.get(f"/sessions/{session_id}/model-selection").json()["toolsets"] == ["default"]
 
 
 def test_api_creates_tool_request_event(tmp_path, monkeypatch):
