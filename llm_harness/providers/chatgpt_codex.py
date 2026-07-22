@@ -46,7 +46,7 @@ class ChatGPTCodexProvider:
             "model": model,
             "instructions": DEFAULT_CODEX_INSTRUCTIONS,
             "stream": True,
-            "input": [{"role": message.role.value, "content": message.content} for message in messages],
+            "input": _responses_input(messages),
             "store": False,
         }
         if tools:
@@ -127,6 +127,34 @@ def _responses_tool(tool: ToolSpec) -> dict:
         "parameters": tool.input_schema,
         "strict": False,
     }
+
+
+def _responses_input(messages: Sequence[Message]) -> list[dict]:
+    items: list[dict] = []
+    for message in messages:
+        if isinstance(message.content, list):
+            items.extend(_responses_input_from_output(message))
+        else:
+            items.append({"role": message.role.value, "content": message.content})
+    return items
+
+
+def _responses_input_from_output(message: Message) -> list[dict]:
+    items: list[dict] = []
+    for item in message.content:
+        if not isinstance(item, dict):
+            items.append({"role": message.role.value, "content": str(item)})
+            continue
+        if item.get("type") == "message":
+            items.append(
+                {
+                    "role": item.get("role") or message.role.value,
+                    "content": item.get("content", []),
+                }
+            )
+        else:
+            items.append(dict(item))
+    return items
 
 
 class _ResponsesAccumulator:

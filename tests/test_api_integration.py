@@ -37,7 +37,7 @@ def test_api_serves_frontend(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "LLM Harness" in response.text
     assert "mock-llm" in response.text
-    assert 'src="./app.js?v=5"' in response.text
+    assert 'src="./app.js?v=6"' in response.text
     assert "loginChatGPT" in response.text
 
 
