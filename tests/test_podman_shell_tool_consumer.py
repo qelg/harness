@@ -5,7 +5,7 @@ import asyncio
 from llm_harness.config import Settings
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import SessionCreated, ToolCallRequested, ToolResult
-from llm_harness.tools.podman_shell import PodmanShellTool
+from llm_harness.tools.podman_shell import PodmanShellTool, PodmanShellToolConsumer
 
 
 class FakePodmanShellTool(PodmanShellTool):
@@ -22,6 +22,7 @@ def test_podman_shell_consumes_tool_request_and_writes_tool_message(tmp_path, mo
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     bus = EventService(tmp_path / "events.db")
     tool = FakePodmanShellTool(settings=Settings.from_env())
+    consumer = PodmanShellToolConsumer(tool=tool)
 
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_1", session_tags=("project-a",))))
     request = asyncio.run(
@@ -35,7 +36,7 @@ def test_podman_shell_consumes_tool_request_and_writes_tool_message(tmp_path, mo
         )
     )
 
-    asyncio.run(tool.process_pending(bus))
+    asyncio.run(consumer.process_pending(bus))
 
     messages = bus.replay(EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "tool_1"}))
     assert len(messages) == 1
@@ -51,6 +52,7 @@ def test_podman_shell_consumer_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     bus = EventService(tmp_path / "events.db")
     tool = FakePodmanShellTool(settings=Settings.from_env())
+    consumer = PodmanShellToolConsumer(tool=tool)
 
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
     asyncio.run(
@@ -64,8 +66,8 @@ def test_podman_shell_consumer_is_idempotent(tmp_path, monkeypatch):
         )
     )
 
-    asyncio.run(tool.process_pending(bus))
-    asyncio.run(tool.process_pending(bus))
+    asyncio.run(consumer.process_pending(bus))
+    asyncio.run(consumer.process_pending(bus))
 
     messages = bus.replay(EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "tool_1"}))
     assert len(messages) == 1

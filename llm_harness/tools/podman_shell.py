@@ -10,10 +10,8 @@ from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import ToolCall, ToolMessageCreated, ToolResult, ToolSession
 
 
-class PodmanShellTool(EventConsumer):
+class PodmanShellTool:
     name = "podman-shell"
-    subscriber = "plugin:podman-shell"
-    event_filter = EventFilter(names=frozenset({"tool.call.requested"}), tags={"tool": name})
     description = "Run a shell command in this session's Podman container."
     input_schema = {
         "type": "object",
@@ -34,38 +32,6 @@ class PodmanShellTool(EventConsumer):
 
     def __init__(self, *, settings: Settings):
         self.settings = settings
-
-    async def process_event(self, bus: EventBus, event: EventRecord, *, registry=None) -> None:
-        if await self._already_completed(bus, event):
-            return
-        result = await self.run(
-            ToolCall(
-                session=ToolSession(id=event.tags["session"], tags=_session_user_tags(bus, event.tags["session"])),
-                name=self.name,
-                input=event.payload.get("input", {}),
-            )
-        )
-        await bus.append_message(
-            ToolMessageCreated(
-                session_id=event.tags["session"],
-                content=result.output,
-                tool=self.name,
-                run_id=event.tags["run"],
-                metadata=result.metadata,
-            ),
-            producer=self.name,
-            causation_id=event.id,
-            correlation_id=event.correlation_id or event.id,
-        )
-
-    async def _already_completed(self, bus: EventBus, event: EventRecord) -> bool:
-        messages = bus.replay(
-            EventFilter(
-                names=frozenset({ToolMessageCreated.name}),
-                tags={"session": event.tags["session"], "tool": self.name, "run": event.tags["run"]},
-            )
-        )
-        return bool(messages)
 
     async def run(self, call: ToolCall) -> ToolResult:
         cmd = call.input.get("cmd")
@@ -143,6 +109,47 @@ class PodmanShellTool(EventConsumer):
         stdout, stderr = await start.communicate()
         if start.returncode != 0:
             raise RuntimeError(stderr.decode(errors="replace") or stdout.decode(errors="replace"))
+
+
+class PodmanShellToolConsumer(EventConsumer):
+    name = "podman-shell"
+    subscriber = "plugin:podman-shell"
+    event_filter = EventFilter(names=frozenset({"tool.call.requested"}), tags={"tool": "podman-shell"})
+
+    def __init__(self, *, tool: PodmanShellTool):
+        self.tool = tool
+
+    async def process_event(self, bus: EventBus, event: EventRecord, *, registry=None) -> None:
+        if await self._already_completed(bus, event):
+            return
+        result = await self.tool.run(
+            ToolCall(
+                session=ToolSession(id=event.tags["session"], tags=_session_user_tags(bus, event.tags["session"])),
+                name=self.tool.name,
+                input=event.payload.get("input", {}),
+            )
+        )
+        await bus.append_message(
+            ToolMessageCreated(
+                session_id=event.tags["session"],
+                content=result.output,
+                tool=self.tool.name,
+                run_id=event.tags["run"],
+                metadata=result.metadata,
+            ),
+            producer=self.name,
+            causation_id=event.id,
+            correlation_id=event.correlation_id or event.id,
+        )
+
+    async def _already_completed(self, bus: EventBus, event: EventRecord) -> bool:
+        messages = bus.replay(
+            EventFilter(
+                names=frozenset({ToolMessageCreated.name}),
+                tags={"session": event.tags["session"], "tool": self.tool.name, "run": event.tags["run"]},
+            )
+        )
+        return bool(messages)
 
 
 def _valid_container_name(name: str) -> bool:

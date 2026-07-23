@@ -11,7 +11,7 @@ from llm_harness.providers.chatgpt_codex import ChatGPTCodexProvider
 from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
 from llm_harness.toolsets import DefaultToolSet
-from llm_harness.tools.podman_shell import PodmanShellTool
+from llm_harness.tools.podman_shell import PodmanShellTool, PodmanShellToolConsumer
 
 
 def register(registry, *, bus=None) -> None:
@@ -39,7 +39,7 @@ def register(registry, *, bus=None) -> None:
     registry.add_provider(MockLLMProvider(response=settings.mock_llm_response))
     podman_shell = PodmanShellTool(settings=settings)
     registry.add_tool(podman_shell)
-    registry.add_event_consumer_plugin(podman_shell)
+    registry.add_event_consumer_plugin(PodmanShellToolConsumer(tool=podman_shell))
     registry.add_toolset(DefaultToolSet())
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
