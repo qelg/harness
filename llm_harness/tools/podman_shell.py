@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import shutil
 
@@ -9,10 +10,12 @@ from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import ToolCall, ToolMessageCreated, ToolResult, ToolSession
 
+logger = logging.getLogger(__name__)
+
 
 class PodmanShellTool:
     name = "podman-shell"
-    description = "Run a shell command in this session's Podman container."
+    description = "Run a shell command"
     input_schema = {
         "type": "object",
         "properties": {
@@ -61,9 +64,15 @@ class PodmanShellTool:
 
         output = stdout.decode(errors="replace")
         error = stderr.decode(errors="replace")
+        metadata = {
+            "container": container,
+            "stderr": error,
+            "exit_code": process.returncode,
+            "success": process.returncode == 0,
+        }
         if process.returncode != 0:
-            raise RuntimeError(error or f"command failed with exit code {process.returncode}")
-        return ToolResult(output=output, metadata={"container": container, "stderr": error})
+            output = _failed_command_output(output, error, process.returncode)
+        return ToolResult(output=output, metadata=metadata)
 
     def _container_for(self, call: ToolCall) -> str:
         for tag in call.session.tags:
@@ -122,12 +131,35 @@ class PodmanShellToolConsumer(EventConsumer):
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry=None) -> None:
         if await self._already_completed(bus, event):
             return
-        result = await self.tool.run(
-            ToolCall(
-                session=ToolSession(id=event.tags["session"], tags=_session_user_tags(bus, event.tags["session"])),
-                name=self.tool.name,
-                input=event.payload.get("input", {}),
+        call = ToolCall(
+            session=ToolSession(id=event.tags["session"], tags=_session_user_tags(bus, event.tags["session"])),
+            name=self.tool.name,
+            input=event.payload.get("input", {}),
+        )
+        logger.info(
+            "starting tool execution tool=%s session=%s run=%s input=%s",
+            self.tool.name,
+            event.tags["session"],
+            event.tags["run"],
+            call.input,
+        )
+        try:
+            result = await self.tool.run(call)
+        except Exception:
+            logger.exception(
+                "tool execution failed tool=%s session=%s run=%s",
+                self.tool.name,
+                event.tags["session"],
+                event.tags["run"],
             )
+            raise
+        logger.info(
+            "finished tool execution tool=%s session=%s run=%s output_bytes=%d metadata=%s",
+            self.tool.name,
+            event.tags["session"],
+            event.tags["run"],
+            len(result.output.encode()),
+            result.metadata,
         )
         await bus.append_message(
             ToolMessageCreated(
@@ -154,6 +186,15 @@ class PodmanShellToolConsumer(EventConsumer):
 
 def _valid_container_name(name: str) -> bool:
     return bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", name))
+
+
+def _failed_command_output(stdout: str, stderr: str, exit_code: int | None) -> str:
+    parts = [f"command exited with code {exit_code}"]
+    if stdout:
+        parts.extend(["", "stdout:", stdout.rstrip("\n")])
+    if stderr:
+        parts.extend(["", "stderr:", stderr.rstrip("\n")])
+    return "\n".join(parts) + "\n"
 
 
 def _session_user_tags(bus: EventBus, session_id: str) -> tuple[str, ...]:

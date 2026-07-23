@@ -90,6 +90,15 @@ nix build .#podman-tool-image
 podman load -i result
 ```
 
+Auf Hosts ohne globale Containers-Policy kann `podman load` eine Policy-Datei verlangen. `nix run` laedt das Archiv deshalb ueber `skopeo --policy ... copy`; die Policy akzeptiert nur lokale Archive/Verzeichnisse und lehnt andere Transports ab. Fuer manuelles Laden:
+
+```bash
+nix build .#podman-tool-image
+skopeo --policy "$(nix build --no-link --print-out-paths .#containers-policy)" copy \
+  docker-archive:result \
+  containers-storage:localhost/llm-harness-tool:latest
+```
+
 Das Image heisst `llm-harness-tool:latest`. Es enthaelt im Wesentlichen eine Link-Struktur unter `/bin`, deren Symlinks auf Nix-Store-Pfade zeigen. Deshalb muss der Host-Store in Tool-Container gemountet werden:
 
 ```bash
