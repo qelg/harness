@@ -9,7 +9,7 @@ import httpx
 
 from llm_harness.auth_plugins.token_store import CodexOAuthTokenStore
 from llm_harness.config import Settings
-from llm_harness.core.types import Message, ProviderStreamEvent, ToolSpec
+from llm_harness.core.types import Message, ProviderStreamEvent, Role, ToolSpec
 
 DEFAULT_CODEX_INSTRUCTIONS = "You are a helpful coding assistant."
 logger = logging.getLogger(__name__)
@@ -132,11 +132,21 @@ def _responses_tool(tool: ToolSpec) -> dict:
 def _responses_input(messages: Sequence[Message]) -> list[dict]:
     items: list[dict] = []
     for message in messages:
-        if isinstance(message.content, list):
+        if message.role == Role.TOOL:
+            items.append(_tool_message_input(message))
+        elif isinstance(message.content, list):
             items.extend(_responses_input_from_output(message))
         else:
             items.append({"role": message.role.value, "content": message.content})
     return items
+
+
+def _tool_message_input(message: Message) -> dict:
+    return {
+        "type": "function_call_output",
+        "call_id": message.metadata.get("call_id") or str(message.metadata.get("run_id") or message.id),
+        "output": message.content,
+    }
 
 
 def _responses_input_from_output(message: Message) -> list[dict]:

@@ -168,6 +168,10 @@ class LlmProviderRunnerPlugin(EventConsumer):
 
 
 def _message_from_event(event: EventRecord) -> Message:
+    metadata = dict(event.payload.get("metadata", {}))
+    if event.name == "chat.message.tool.created":
+        metadata.setdefault("run_id", event.payload.get("run_id"))
+        metadata.setdefault("tool", event.payload.get("tool"))
     return Message(
         id=event.id,
         session_id=event.tags["session"],
@@ -175,7 +179,7 @@ def _message_from_event(event: EventRecord) -> Message:
         content=event.payload["content"],
         provider=event.payload.get("provider"),
         model=event.payload.get("model"),
-        metadata=event.payload.get("metadata", {}),
+        metadata=metadata,
         created_at=datetime.fromtimestamp(event.created_at_ms / 1000, timezone.utc),
     )
 

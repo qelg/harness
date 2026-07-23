@@ -37,7 +37,7 @@ def test_api_serves_frontend(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert "LLM Harness" in response.text
     assert "mock-llm" in response.text
-    assert 'src="./app.js?v=7"' in response.text
+    assert 'src="./app.js?v=8"' in response.text
     assert "loginChatGPT" in response.text
 
 
@@ -51,8 +51,8 @@ def test_api_serves_frontend_javascript_that_loads_providers(tmp_path, monkeypat
     assert 'request("/providers")' in response.text
     assert 'request("/toolsets")' in response.text
     assert "function init()" in response.text
-    assert "/messages/stream" in response.text
-    assert "async function* readSse" in response.text
+    assert "/messages/updates" in response.text
+    assert "new EventSource" in response.text
     assert "function formatProviderOutput" in response.text
     assert "Tool call:" in response.text
 

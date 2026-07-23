@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ from llm_harness.core.types import (
 from llm_harness.plugins import Registry
 
 MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset({"llm.run.failed"})
+MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta"})
 
 
 class CreateSessionRequest(BaseModel):
@@ -117,6 +118,40 @@ class HarnessApiPlugin:
                     EventFilter(names=MESSAGE_TIMELINE_NAMES, tags={"session": session_id})
                 )
             ]
+
+        @app.get("/sessions/{session_id}/messages/updates")
+        async def stream_message_updates(
+            session_id: str,
+            since_id: int | None = None,
+            last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        ) -> StreamingResponse:
+            _require_session_event(bus, session_id)
+            effective_since_id = since_id if since_id is not None else _parse_last_event_id(last_event_id)
+
+            async def events() -> AsyncIterator[str]:
+                event_filter = EventFilter(
+                    since_id=effective_since_id,
+                    names=MESSAGE_UPDATE_NAMES,
+                    tags={"session": session_id},
+                )
+                sent_ids: set[int] = set()
+                async with bus.subscribe(event_filter) as queue:
+                    for event in bus.replay(event_filter):
+                        sent_ids.add(event.id)
+                        yield _sse(event.type, _message_update_from_event(event), event_id=event.id)
+
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(queue.get(), timeout=15)
+                        except TimeoutError:
+                            yield _sse("heartbeat", {})
+                            continue
+                        if event.id in sent_ids:
+                            continue
+                        sent_ids.add(event.id)
+                        yield _sse(event.type, _message_update_from_event(event), event_id=event.id)
+
+            return StreamingResponse(events(), media_type="text/event-stream")
 
         @app.post("/sessions/{session_id}/messages")
         async def create_message(session_id: str, request: CreateMessageRequest) -> dict[str, Any]:
@@ -247,6 +282,12 @@ def _failed_run_message_from_event(event: BusEvent) -> dict[str, Any]:
     }
 
 
+def _message_update_from_event(event: BusEvent) -> dict[str, Any]:
+    if event.name in MESSAGE_TIMELINE_NAMES:
+        return {"event": _dump_bus_payload(event), "message": _message_from_event(event)}
+    return {"event": _dump_bus_payload(event)}
+
+
 def _model_selection_for(bus: EventBus, session_id: str, *, settings: Settings) -> dict[str, Any]:
     selected = bus.replay(EventFilter(names=frozenset({ModelSelected.name})))
     session_event: BusEvent | None = None
@@ -284,8 +325,18 @@ def _model_selection_from_event(event: BusEvent, *, scope: str) -> dict[str, Any
     }
 
 
-def _sse(event: str, payload: dict[str, Any]) -> str:
-    return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+def _parse_last_event_id(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _sse(event: str, payload: dict[str, Any], *, event_id: int | None = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}event: {event}\ndata: {json.dumps(payload)}\n\n"
 
 
 def _dump_bus_payload(event: BusEvent) -> dict[str, Any]:

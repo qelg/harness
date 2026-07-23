@@ -297,6 +297,67 @@ def test_chatgpt_codex_provider_converts_stored_message_output_to_responses_inpu
     assert asyncio.run(consume_events())[0].delta == "ok"
 
 
+def test_chatgpt_codex_provider_converts_tool_messages_to_function_call_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    conn = app.state.bus.conn
+    ensure_oauth_schema(conn)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO oauth_tokens(
+              provider, subject, access_token, refresh_token, token_type, scope,
+              expires_at, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "openai-codex",
+                "codex-user",
+                "access-token",
+                "refresh-token",
+                "Bearer",
+                "openid",
+                None,
+                json.dumps({"refresh_after": (datetime.now(UTC) + timedelta(hours=1)).isoformat()}),
+                datetime.now(UTC).isoformat(),
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["input"] == [
+            {"type": "function_call_output", "call_id": "call_1", "output": "hello\n"}
+        ]
+        return httpx.Response(
+            200,
+            content=b'data: {"type":"response.output_text.delta","delta":"ok"}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*args, **kwargs):
+        return original_client(transport=transport, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("llm_harness.providers.chatgpt_codex.httpx.AsyncClient", client_factory)
+    provider = app.state.registry.providers["chatgpt-codex"]
+
+    async def consume_events() -> list:
+        message = Message(
+            id=1,
+            session_id="sess_1",
+            role=Role.TOOL,
+            content="hello\n",
+            metadata={"run_id": "call_1"},
+        )
+        return [event async for event in provider.stream_response(model="codex", messages=[message])]
+
+    assert asyncio.run(consume_events())[0].delta == "ok"
+
+
 def test_chatgpt_codex_provider_includes_stream_events_when_logging_enabled(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     monkeypatch.setenv("HARNESS_LOG_PROVIDER_EVENTS", "1")

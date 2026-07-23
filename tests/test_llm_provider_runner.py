@@ -103,6 +103,8 @@ async def _assert_llm_provider_runner_streams_deltas_and_creates_assistant_messa
 
     assert [message.role.value for message in provider.messages] == ["user", "tool"]
     assert [message.content for message in provider.messages] == ["hello", "tool output"]
+    assert provider.messages[1].metadata["run_id"] == "tool_1"
+    assert provider.messages[1].metadata["tool"] == "shell"
     assert [tool.name for tool in provider.tools] == ["echo"]
     assert [event.payload["delta"] for event in deltas] == ["hel", "lo"]
     assert [event.durable for event in deltas] == [False, False]

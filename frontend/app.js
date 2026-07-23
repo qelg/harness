@@ -7,6 +7,8 @@ const state = {
   toolsets: [],
   selectedSessionId: null,
   modelSelection: null,
+  lastEventId: null,
+  updates: null,
 };
 
 const els = {
@@ -164,7 +166,9 @@ async function createSession(event) {
 }
 
 async function selectSession(sessionId) {
+  stopSessionUpdates();
   state.selectedSessionId = sessionId;
+  state.lastEventId = null;
   renderSessions();
   const session = state.sessions.find((item) => item.id === sessionId);
   els.chatTitle.textContent = session?.title || sessionId;
@@ -173,6 +177,7 @@ async function selectSession(sessionId) {
   els.sendMessage.disabled = false;
   await loadModelSelection();
   await loadMessages();
+  startSessionUpdates(sessionId);
 }
 
 async function loadModelSelection() {
@@ -222,6 +227,7 @@ async function loadMessages() {
   try {
     const messages = await request(`/sessions/${encodeURIComponent(state.selectedSessionId)}/messages`);
     renderMessages(messages);
+    state.lastEventId = maxMessageEventId(messages);
   } catch (error) {
     els.messages.innerHTML = `<div class="status">${escapeHtml(error.message)}</div>`;
   }
@@ -236,64 +242,20 @@ async function sendMessage(event) {
 
   els.messageContent.value = "";
   els.sendMessage.disabled = true;
-  const streamingSessionId = state.selectedSessionId;
-  let streamingMessageId = null;
   try {
-    appendTransientMessage({
-      id: `pending-user-${Date.now()}`,
-      role: "user",
-      content,
+    await request(`/sessions/${encodeURIComponent(state.selectedSessionId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content }),
     });
-    streamingMessageId = appendTransientMessage({
-      id: `pending-assistant-${Date.now()}`,
-      role: "assistant",
-      content: "",
-    });
-    await streamUserMessage(streamingSessionId, content, {
-      onDelta(delta) {
-        appendToMessage(streamingMessageId, delta);
-      },
-      onFailed(message) {
-        replaceMessage(streamingMessageId, message);
-      },
-    });
-    if (state.selectedSessionId === streamingSessionId) {
-      await loadMessages();
-    }
   } catch (error) {
-    if (streamingMessageId !== null) {
-      replaceMessage(streamingMessageId, {
-        id: streamingMessageId,
-        role: "assistant",
-        content: `Streaming failed: ${error.message}`,
-      });
-    }
+    appendTransientMessage({
+      id: `send-error-${Date.now()}`,
+      role: "assistant",
+      content: `Send failed: ${error.message}`,
+    });
   } finally {
     els.sendMessage.disabled = false;
     els.messageContent.focus();
-  }
-}
-
-async function streamUserMessage(sessionId, content, handlers) {
-  const response = await fetch(`${apiBase}/sessions/${encodeURIComponent(sessionId)}/messages/stream`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `${response.status} ${response.statusText}`);
-  }
-  if (!response.body) {
-    throw new Error("Streaming response is not readable.");
-  }
-
-  for await (const event of readSse(response.body)) {
-    if (event.type === "llm.delta") {
-      handlers.onDelta(event.data.payload?.delta || "");
-    } else if (event.type === "llm.run.failed") {
-      handlers.onFailed(failedRunMessage(event.data));
-    }
   }
 }
 
@@ -412,6 +374,91 @@ function renderMessages(messages) {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+function startSessionUpdates(sessionId) {
+  stopSessionUpdates();
+  const url = new URL(`${apiBase}/sessions/${encodeURIComponent(sessionId)}/messages/updates`, window.location.href);
+  if (state.lastEventId !== null && state.lastEventId !== undefined) {
+    url.searchParams.set("since_id", String(state.lastEventId));
+  }
+  const source = new EventSource(url);
+  state.updates = source;
+
+  source.addEventListener("chat.message.user.created", (event) => handleMessageUpdate(sessionId, event));
+  source.addEventListener("chat.message.assistant.created", (event) => handleMessageUpdate(sessionId, event));
+  source.addEventListener("chat.message.tool.created", (event) => handleMessageUpdate(sessionId, event));
+  source.addEventListener("llm.run.failed", (event) => handleMessageUpdate(sessionId, event));
+  source.addEventListener("llm.delta", (event) => handleDeltaUpdate(sessionId, event));
+  source.addEventListener("heartbeat", () => {});
+  source.onerror = () => {
+    if (state.selectedSessionId === sessionId) {
+      setModelStatus("Waiting for session updates...");
+    }
+  };
+}
+
+function stopSessionUpdates() {
+  if (state.updates) {
+    state.updates.close();
+    state.updates = null;
+  }
+}
+
+function handleMessageUpdate(sessionId, event) {
+  if (state.selectedSessionId !== sessionId) {
+    return;
+  }
+  const update = JSON.parse(event.data);
+  rememberEventId(update.event?.id);
+  if (update.message) {
+    upsertMessage(update.message);
+  }
+}
+
+function handleDeltaUpdate(sessionId, event) {
+  if (state.selectedSessionId !== sessionId) {
+    return;
+  }
+  const update = JSON.parse(event.data);
+  rememberEventId(update.event?.id);
+  const payload = update.event?.payload || {};
+  appendToRunMessage(payload.run_id, payload.delta || "");
+}
+
+function rememberEventId(eventId) {
+  if (typeof eventId !== "number") {
+    return;
+  }
+  state.lastEventId = Math.max(state.lastEventId || 0, eventId);
+}
+
+function maxMessageEventId(messages) {
+  return messages.reduce((max, message) => Math.max(max, Number(message.id) || 0), 0);
+}
+
+function upsertMessage(message) {
+  if (els.messages.querySelector(".empty")) {
+    els.messages.innerHTML = "";
+  }
+  const existing = messageNode(message);
+  if (existing) {
+    existing.outerHTML = messageHtml(message);
+  } else {
+    els.messages.insertAdjacentHTML("beforeend", messageHtml(message));
+  }
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function messageNode(message) {
+  const byId = els.messages.querySelector(`[data-message-id="${cssEscape(message.id)}"]`);
+  if (byId) {
+    return byId;
+  }
+  if (message.run_id) {
+    return els.messages.querySelector(`[data-run-id="${cssEscape(message.run_id)}"]`);
+  }
+  return null;
+}
+
 function appendTransientMessage(message) {
   if (els.messages.querySelector(".empty")) {
     els.messages.innerHTML = "";
@@ -422,11 +469,20 @@ function appendTransientMessage(message) {
   return id;
 }
 
-function appendToMessage(messageId, delta) {
-  if (!delta) {
+function appendToRunMessage(runId, delta) {
+  if (!runId || !delta) {
     return;
   }
-  const node = els.messages.querySelector(`[data-message-id="${cssEscape(messageId)}"] .message-content`);
+  let node = els.messages.querySelector(`[data-run-id="${cssEscape(runId)}"] .message-content`);
+  if (!node) {
+    appendTransientMessage({
+      id: `stream-${runId}`,
+      role: "assistant",
+      run_id: runId,
+      content: "",
+    });
+    node = els.messages.querySelector(`[data-run-id="${cssEscape(runId)}"] .message-content`);
+  }
   if (!node) {
     return;
   }
@@ -434,29 +490,12 @@ function appendToMessage(messageId, delta) {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-function replaceMessage(messageId, message) {
-  const node = els.messages.querySelector(`[data-message-id="${cssEscape(messageId)}"]`);
-  if (!node) {
-    return;
-  }
-  node.outerHTML = messageHtml({ ...message, id: messageId });
-  els.messages.scrollTop = els.messages.scrollHeight;
-}
-
-function failedRunMessage(event) {
-  const error = event.payload?.error || "LLM run failed";
-  return {
-    id: event.id,
-    role: "assistant",
-    content: `LLM run failed: ${error}`,
-  };
-}
-
 function messageHtml(message) {
   const role = escapeHtml(message.role || "event");
   const content = escapeHtml(formatMessageContent(message.content));
+  const runId = message.run_id ? ` data-run-id="${escapeHtml(message.run_id)}"` : "";
   return `
-    <article class="message ${role}" data-message-id="${escapeHtml(message.id)}">
+    <article class="message ${role}" data-message-id="${escapeHtml(message.id)}"${runId}>
       <div class="message-role">${role}</div>
       <div class="message-content">${content}</div>
     </article>
@@ -549,6 +588,7 @@ function formatJsonish(value) {
 }
 
 function renderEmptyChat() {
+  stopSessionUpdates();
   els.chatTitle.textContent = "Select a session";
   els.chatMeta.textContent = "No session selected";
   els.messageContent.disabled = true;
@@ -571,54 +611,6 @@ function setAuthStatus(text) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function* readSse(body) {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        const rawEvent = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const event = parseSseEvent(rawEvent);
-        if (event) {
-          yield event;
-        }
-        boundary = buffer.indexOf("\n\n");
-      }
-    }
-    buffer += decoder.decode();
-    const event = parseSseEvent(buffer);
-    if (event) {
-      yield event;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-function parseSseEvent(rawEvent) {
-  let type = "message";
-  const data = [];
-  for (const line of rawEvent.split("\n")) {
-    if (line.startsWith("event:")) {
-      type = line.slice(6).trim();
-    } else if (line.startsWith("data:")) {
-      data.push(line.slice(5).trimStart());
-    }
-  }
-  if (data.length === 0) {
-    return null;
-  }
-  return { type, data: JSON.parse(data.join("\n")) };
 }
 
 function cssEscape(value) {
