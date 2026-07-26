@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 from llm_harness.config import Settings, parse_tag_container_map
 
@@ -26,3 +29,42 @@ def test_settings_reads_provider_event_logging_flag(monkeypatch):
     monkeypatch.setenv("HARNESS_LOG_PROVIDER_EVENTS", "1")
 
     assert Settings.from_env().log_provider_events is True
+
+
+def test_settings_discovers_skills_in_configured_directories(tmp_path, monkeypatch):
+    directory = tmp_path / "skills"
+    (directory / "python").mkdir(parents=True)
+    (directory / "python" / "SKILL.md").write_text("# Python\n")
+    (directory / "without-instructions").mkdir()
+    (directory / "README.md").write_text("not a skill\n")
+    monkeypatch.setenv("HARNESS_SKILLS", json.dumps([str(directory)]))
+
+    skills = Settings.from_env().skills
+
+    assert [(skill.name, skill.path) for skill in skills] == [
+        ("python", directory / "python")
+    ]
+
+
+def test_settings_discovers_linked_skill_directories(tmp_path, monkeypatch):
+    source = tmp_path / "source" / "nixos"
+    source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("# NixOS\n")
+    directory = tmp_path / "skills"
+    directory.mkdir()
+    (directory / "nixos").symlink_to(source, target_is_directory=True)
+    monkeypatch.setenv("HARNESS_SKILLS", json.dumps([str(directory)]))
+
+    assert [skill.name for skill in Settings.from_env().skills] == ["nixos"]
+
+
+def test_settings_rejects_duplicate_discovered_skill_names(tmp_path, monkeypatch):
+    directories = [tmp_path / "first", tmp_path / "second"]
+    for directory in directories:
+        skill = directory / "python"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# Python\n")
+    monkeypatch.setenv("HARNESS_SKILLS", json.dumps([str(path) for path in directories]))
+
+    with pytest.raises(ValueError, match="duplicate skill name"):
+        Settings.from_env()

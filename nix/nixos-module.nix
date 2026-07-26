@@ -59,6 +59,17 @@ in
       description = "Toolsets selected when no session-specific selection event overrides them.";
     };
 
+    skills = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = [ ];
+      example = lib.literalExpression "[ ./skills ]";
+      description = ''
+        Directories containing skills exposed by the built-in skill_view tool.
+        Each immediate child directory containing a SKILL.md file is discovered
+        as a skill and uses its directory name as the name exposed to the model.
+      '';
+    };
+
     logProviderEvents = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -246,6 +257,7 @@ in
           HARNESS_OPENAI_BASE_URL = cfg.openaiBaseUrl;
           HARNESS_OPENROUTER_BASE_URL = cfg.openrouterBaseUrl;
           HARNESS_DEFAULT_TOOLSETS = lib.concatStringsSep "," cfg.defaultToolsets;
+          HARNESS_SKILLS = builtins.toJSON (map toString cfg.skills);
           HARNESS_LOG_PROVIDER_EVENTS = if cfg.logProviderEvents then "1" else "0";
           HARNESS_PODMAN_IMAGE = cfg.podmanImage;
           HARNESS_PODMAN_MOUNT_NIX_STORE = if cfg.podmanMountNixStore then "1" else "0";
