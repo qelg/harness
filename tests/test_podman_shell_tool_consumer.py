@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 
-import pytest
 
 from llm_harness.config import Settings
 from llm_harness.core.events import EventFilter, EventService
@@ -99,14 +98,14 @@ def test_podman_shell_consumer_is_idempotent(tmp_path, monkeypatch):
     assert len(tool.calls) == 1
 
 
-def test_podman_shell_consumer_logs_failure(tmp_path, monkeypatch, caplog):
+def test_podman_shell_consumer_writes_tool_message_for_exception(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     bus = EventService(tmp_path / "events.db")
     tool = FailingPodmanShellTool(settings=Settings.from_env())
     consumer = PodmanShellToolConsumer(tool=tool)
 
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
-    asyncio.run(
+    request = asyncio.run(
         bus.append_message(
             ToolCallRequested(
                 session_id="sess_1",
@@ -118,9 +117,18 @@ def test_podman_shell_consumer_logs_failure(tmp_path, monkeypatch, caplog):
     )
 
     with caplog.at_level(logging.INFO, logger="llm_harness.tools.podman_shell"):
-        with pytest.raises(RuntimeError, match="boom"):
-            asyncio.run(consumer.process_pending(bus))
+        asyncio.run(consumer.process_pending(bus))
 
+    messages = bus.replay(EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "tool_1"}))
+    assert len(messages) == 1
+    assert messages[0].payload["content"] == "tool execution failed: RuntimeError: boom\n"
+    assert messages[0].payload["metadata"] == {
+        "success": False,
+        "error_type": "RuntimeError",
+        "error": "boom",
+    }
+    assert messages[0].causation_id == request.id
+    assert bus.last_acked(consumer.subscriber) == request.id
     assert "starting tool execution tool=podman-shell session=sess_1 run=tool_1" in caplog.text
     assert "tool execution failed tool=podman-shell session=sess_1 run=tool_1" in caplog.text
 
