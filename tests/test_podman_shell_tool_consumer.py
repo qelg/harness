@@ -50,7 +50,7 @@ def test_podman_shell_consumes_tool_request_and_writes_tool_message(tmp_path, mo
         bus.append_message(
             ToolCallRequested(
                 session_id="sess_1",
-                tool="podman-shell",
+                tool="terminal",
                 input={"cmd": "echo hello"},
                 run_id="tool_1",
             )
@@ -68,8 +68,8 @@ def test_podman_shell_consumes_tool_request_and_writes_tool_message(tmp_path, mo
     assert tool.calls[0].session.id == "sess_1"
     assert tool.calls[0].session.tags == ("project-a",)
     assert tool.calls[0].input == {"cmd": "echo hello"}
-    assert "starting tool execution tool=podman-shell session=sess_1 run=tool_1" in caplog.text
-    assert "finished tool execution tool=podman-shell session=sess_1 run=tool_1" in caplog.text
+    assert "starting tool execution tool=terminal session=sess_1 run=tool_1" in caplog.text
+    assert "finished tool execution tool=terminal session=sess_1 run=tool_1" in caplog.text
 
 
 def test_podman_shell_consumer_is_idempotent(tmp_path, monkeypatch):
@@ -83,7 +83,7 @@ def test_podman_shell_consumer_is_idempotent(tmp_path, monkeypatch):
         bus.append_message(
             ToolCallRequested(
                 session_id="sess_1",
-                tool="podman-shell",
+                tool="terminal",
                 input={"cmd": "echo hello"},
                 run_id="tool_1",
             )
@@ -109,7 +109,7 @@ def test_podman_shell_consumer_writes_tool_message_for_exception(tmp_path, monke
         bus.append_message(
             ToolCallRequested(
                 session_id="sess_1",
-                tool="podman-shell",
+                tool="terminal",
                 input={"cmd": "echo hello"},
                 run_id="tool_1",
             )
@@ -129,8 +129,8 @@ def test_podman_shell_consumer_writes_tool_message_for_exception(tmp_path, monke
     }
     assert messages[0].causation_id == request.id
     assert bus.last_acked(consumer.subscriber) == request.id
-    assert "starting tool execution tool=podman-shell session=sess_1 run=tool_1" in caplog.text
-    assert "tool execution failed tool=podman-shell session=sess_1 run=tool_1" in caplog.text
+    assert "starting tool execution tool=terminal session=sess_1 run=tool_1" in caplog.text
+    assert "tool execution failed tool=terminal session=sess_1 run=tool_1" in caplog.text
 
 
 def test_podman_shell_returns_result_for_nonzero_exit(monkeypatch):
@@ -156,7 +156,7 @@ def test_podman_shell_returns_result_for_nonzero_exit(monkeypatch):
         tool.run(
             ToolCall(
                 session=ToolSession(id="sess_1"),
-                name="podman-shell",
+                name="terminal",
                 input={"cmd": "bad-command"},
             )
         )
@@ -237,7 +237,7 @@ def test_podman_shell_stops_container_after_last_parallel_command(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     async def run_parallel_commands():
-        call = ToolCall(session=ToolSession(id="sess_1"), name="podman-shell", input={"cmd": "wait"})
+        call = ToolCall(session=ToolSession(id="sess_1"), name="terminal", input={"cmd": "wait"})
         first = asyncio.create_task(tool.run(call))
         await started[0].wait()
         second = asyncio.create_task(tool.run(call))

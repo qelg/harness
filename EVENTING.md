@@ -145,7 +145,7 @@ Recommended common tags:
 | `role` | `user` | Message role. |
 | `provider` | `openrouter` | LLM provider. |
 | `model` | `openai/gpt-4.1-mini` | LLM model. |
-| `tool` | `podman-shell` | Tool name. |
+| `tool` | `terminal` | Tool name. |
 | `container` | `llm-harness-session-42` | Container target/name. |
 | `project` | `project-a` | User/project tag inherited from session tags. |
 | `oauth_provider` | `openai-codex` | Auth provider. |

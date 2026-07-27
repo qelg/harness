@@ -29,22 +29,22 @@ def test_tool_result_waits_for_parallel_tool_requests_before_requesting_llm(tmp_
                 model="mock-model",
                 run_id="llm_1",
                 content=[
-                    {"type": "function_call", "call_id": "tool_1", "name": "podman-shell"},
-                    {"type": "function_call", "call_id": "tool_2", "name": "podman-shell"},
+                    {"type": "function_call", "call_id": "tool_1", "name": "terminal"},
+                    {"type": "function_call", "call_id": "tool_2", "name": "terminal"},
                 ],
             )
         )
     )
     tool_1 = asyncio.run(
         bus.append_message(
-            ToolCallRequested(session_id="sess_1", tool="podman-shell", input={"cmd": "echo one"}, run_id="tool_1"),
+            ToolCallRequested(session_id="sess_1", tool="terminal", input={"cmd": "echo one"}, run_id="tool_1"),
             causation_id=assistant.id,
             correlation_id=assistant.id,
         )
     )
     tool_2 = asyncio.run(
         bus.append_message(
-            ToolCallRequested(session_id="sess_1", tool="podman-shell", input={"cmd": "echo two"}, run_id="tool_2"),
+            ToolCallRequested(session_id="sess_1", tool="terminal", input={"cmd": "echo two"}, run_id="tool_2"),
             causation_id=assistant.id,
             correlation_id=assistant.id,
         )
@@ -52,7 +52,7 @@ def test_tool_result_waits_for_parallel_tool_requests_before_requesting_llm(tmp_
 
     result_1 = asyncio.run(
         bus.append_message(
-            ToolMessageCreated(session_id="sess_1", tool="podman-shell", content="one\n", run_id="tool_1"),
+            ToolMessageCreated(session_id="sess_1", tool="terminal", content="one\n", run_id="tool_1"),
             causation_id=tool_1.id,
             correlation_id=assistant.id,
         )
@@ -63,7 +63,7 @@ def test_tool_result_waits_for_parallel_tool_requests_before_requesting_llm(tmp_
 
     result_2 = asyncio.run(
         bus.append_message(
-            ToolMessageCreated(session_id="sess_1", tool="podman-shell", content="two\n", run_id="tool_2"),
+            ToolMessageCreated(session_id="sess_1", tool="terminal", content="two\n", run_id="tool_2"),
             causation_id=tool_2.id,
             correlation_id=assistant.id,
         )
@@ -93,7 +93,7 @@ def test_tool_result_ignores_results_without_tool_request_causation(tmp_path, mo
 
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
     asyncio.run(
-        bus.append_message(ToolMessageCreated(session_id="sess_1", tool="podman-shell", content="one\n", run_id="tool_1"))
+        bus.append_message(ToolMessageCreated(session_id="sess_1", tool="terminal", content="one\n", run_id="tool_1"))
     )
 
     asyncio.run(plugin.process_pending(bus))

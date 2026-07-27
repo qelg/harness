@@ -9,7 +9,7 @@ Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung is
 - Chats sollen persistent sein und Tags tragen, damit sie Projekten, Workloads oder Container-Zielen zugeordnet werden koennen.
 - Zustandsaenderungen werden als Events gespeichert. Plugins koennen ueber EventFilter auf diese Events reagieren.
 - Streaming-Antworten sollen sofort an Clients geliefert und nach Abschluss als Message gespeichert werden.
-- Tool-Ausfuehrung soll pro Session isolierbar sein. Das eingebaute `podman-shell` Tool nutzt pro Session einen eigenen Container, sofern kein Tag-Mapping auf einen geteilten Container konfiguriert ist.
+- Tool-Ausfuehrung soll pro Session isolierbar sein. Das eingebaute `terminal` Tool nutzt pro Session einen eigenen Container, sofern kein Tag-Mapping auf einen geteilten Container konfiguriert ist.
 
 ## Komponenten
 
@@ -182,9 +182,9 @@ Der Adapter ruft `POST {base_url}/chat/completions` mit `stream: true` auf und w
 
 `mock-llm` nutzt keine externe API. Er streamt die konfigurierte Antwort aus `HARNESS_MOCK_LLM_RESPONSE`, Default `mock llm response`.
 
-## Eingebautes Tool: podman-shell
+## Eingebautes Tool: terminal
 
-`podman-shell` erwartet Input:
+`terminal` erwartet Input:
 
 ```json
 {

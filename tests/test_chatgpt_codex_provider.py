@@ -147,7 +147,7 @@ def test_chatgpt_codex_provider_combines_response_sse_events(tmp_path, monkeypat
                 b'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","content":[]}}\n\n'
                 b'data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"he"}\n\n'
                 b'data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"llo"}\n\n'
-                b'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","name":"podman-shell"}}\n\n'
+                b'data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","name":"terminal"}}\n\n'
                 b'data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\\"cmd\\":"}\n\n'
                 b'data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"\\"echo hi\\"}"}\n\n'
                 b'data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":7}}}\n\n'
@@ -175,7 +175,7 @@ def test_chatgpt_codex_provider_combines_response_sse_events(tmp_path, monkeypat
     assert completed["id"] == "resp_1"
     assert completed["usage"]["input_tokens"] == 7
     assert completed["output"][0]["content"][0]["text"] == "hello"
-    assert completed["output"][1]["name"] == "podman-shell"
+    assert completed["output"][1]["name"] == "terminal"
     assert completed["output"][1]["arguments"] == '{"cmd":"echo hi"}'
     assert "stream_events" not in completed
 
@@ -266,14 +266,14 @@ def test_chatgpt_codex_provider_converts_stored_message_output_to_responses_inpu
             "type": "message",
             "content": [{"type": "output_text", "text": "hello"}],
         },
-        {"type": "function_call", "name": "podman-shell", "arguments": "{\"cmd\":\"echo hi\"}"},
+        {"type": "function_call", "name": "terminal", "arguments": "{\"cmd\":\"echo hi\"}"},
     ]
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert payload["input"] == [
             {"role": "assistant", "content": [{"type": "output_text", "text": "hello"}]},
-            {"type": "function_call", "name": "podman-shell", "arguments": "{\"cmd\":\"echo hi\"}"},
+            {"type": "function_call", "name": "terminal", "arguments": "{\"cmd\":\"echo hi\"}"},
         ]
         return httpx.Response(
             200,

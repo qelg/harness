@@ -54,7 +54,7 @@ def test_openai_compatible_provider_accumulates_reasoning_tool_calls_and_usage(m
                 b'data: {"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","text":"The","format":"unknown","index":0}]}}]}\n\n'
                 b'data: {"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.text","text":" user","format":"unknown","index":0}]}}]}\n\n'
                 b'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n'
-                b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"podman-shell","arguments":"{\\"cmd\\":"}}]}}]}\n\n'
+                b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"terminal","arguments":"{\\"cmd\\":"}}]}}]}\n\n'
                 b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"echo hi\\"}"}}]},"finish_reason":"tool_calls","native_finish_reason":"tool_calls"}]}\n\n'
                 b'data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16}}\n\n'
                 b"data: [DONE]\n\n"
@@ -90,7 +90,7 @@ def test_openai_compatible_provider_accumulates_reasoning_tool_calls_and_usage(m
     assert completed["message"]["reasoning_details"] == [
         {"type": "reasoning.text", "text": "The user", "format": "unknown", "index": 0}
     ]
-    assert completed["output"][0]["tool_calls"][0]["function"]["name"] == "podman-shell"
+    assert completed["output"][0]["tool_calls"][0]["function"]["name"] == "terminal"
     assert completed["output"][0]["tool_calls"][0]["function"]["arguments"] == '{"cmd":"echo hi"}'
     assert "stream_chunks" not in completed
 
