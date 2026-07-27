@@ -22,7 +22,7 @@ from llm_harness.core.types import (
 )
 from llm_harness.plugins import Registry
 
-MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset({"llm.run.failed"})
+MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset({"llm.run.failed", ToolCallRequested.name})
 MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta"})
 
 
@@ -202,7 +202,7 @@ class HarnessApiPlugin:
                             yield _sse("heartbeat", {})
                             continue
                         yield _sse(event.type, _dump_bus_payload(event))
-                        if event.type in {"chat.message.assistant.created", "llm.run.failed"}:
+                        if _is_terminal_stream_event(event):
                             break
 
             return StreamingResponse(events(), media_type="text/event-stream")
@@ -220,6 +220,24 @@ class HarnessApiPlugin:
                 producer="harness-api",
             )
             return {"status": "accepted", "event": _dump_bus_payload(event)}
+
+
+def _is_terminal_stream_event(event: BusEvent) -> bool:
+    if event.type == "llm.run.failed":
+        return True
+    if event.type != "chat.message.assistant.created":
+        return False
+    return not _contains_function_call(event.payload.get("content"))
+
+
+def _contains_function_call(content: Any) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(item, dict)
+        and (item.get("type") == "function_call" or bool(item.get("tool_calls")))
+        for item in content
+    )
 
 
 def _require_session_event(bus: EventBus, session_id: str) -> None:
@@ -247,6 +265,20 @@ def _session_from_events(event: BusEvent) -> dict[str, Any]:
 def _message_from_event(event: BusEvent) -> dict[str, Any]:
     if event.name == "llm.run.failed":
         return _failed_run_message_from_event(event)
+    if event.name == ToolCallRequested.name:
+        return {
+            "id": event.id,
+            "session_id": event.tags["session"],
+            "role": "tool_request",
+            "content": event.payload.get("input", {}),
+            "provider": None,
+            "model": None,
+            "tool": event.payload.get("tool"),
+            "run_id": event.payload.get("run_id"),
+            "metadata": {},
+            "event_name": event.name,
+            "created_at_ms": event.created_at_ms,
+        }
     return {
         "id": event.id,
         "session_id": event.tags["session"],
