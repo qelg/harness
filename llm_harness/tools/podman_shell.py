@@ -35,6 +35,8 @@ class PodmanShellTool:
 
     def __init__(self, *, settings: Settings):
         self.settings = settings
+        self._container_locks: dict[str, asyncio.Lock] = {}
+        self._active_commands: dict[str, int] = {}
 
     async def run(self, call: ToolCall) -> ToolResult:
         cmd = call.input.get("cmd")
@@ -45,34 +47,37 @@ class PodmanShellTool:
             raise RuntimeError("podman is not installed or not on PATH")
 
         container = self._container_for(call)
-        await self._ensure_container(container)
-        process = await asyncio.create_subprocess_exec(
-            "podman",
-            "exec",
-            container,
-            "sh",
-            "-lc",
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        await self._acquire_container(container)
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except TimeoutError:
-            process.kill()
-            raise
+            process = await asyncio.create_subprocess_exec(
+                "podman",
+                "exec",
+                container,
+                "sh",
+                "-lc",
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            except TimeoutError:
+                process.kill()
+                raise
 
-        output = stdout.decode(errors="replace")
-        error = stderr.decode(errors="replace")
-        metadata = {
-            "container": container,
-            "stderr": error,
-            "exit_code": process.returncode,
-            "success": process.returncode == 0,
-        }
-        if process.returncode != 0:
-            output = _failed_command_output(output, error, process.returncode)
-        return ToolResult(output=output, metadata=metadata)
+            output = stdout.decode(errors="replace")
+            error = stderr.decode(errors="replace")
+            metadata = {
+                "container": container,
+                "stderr": error,
+                "exit_code": process.returncode,
+                "success": process.returncode == 0,
+            }
+            if process.returncode != 0:
+                output = _failed_command_output(output, error, process.returncode)
+            return ToolResult(output=output, metadata=metadata)
+        finally:
+            await self._release_container(container)
 
     def _container_for(self, call: ToolCall) -> str:
         for tag in call.session.tags:
@@ -80,18 +85,46 @@ class PodmanShellTool:
                 return self.settings.tag_container_map[tag]
         return f"llm-harness-session-{call.session.id}"
 
+    async def _acquire_container(self, name: str) -> None:
+        lock = self._container_locks.setdefault(name, asyncio.Lock())
+        async with lock:
+            if self._active_commands.get(name, 0) == 0:
+                await self._ensure_container(name)
+            self._active_commands[name] = self._active_commands.get(name, 0) + 1
+
+    async def _release_container(self, name: str) -> None:
+        lock = self._container_locks[name]
+        async with lock:
+            remaining = self._active_commands[name] - 1
+            if remaining > 0:
+                self._active_commands[name] = remaining
+                return
+            del self._active_commands[name]
+            try:
+                await self._stop_container(name)
+            except Exception:
+                logger.exception("failed to stop idle tool container container=%s", name)
+
     async def _ensure_container(self, name: str) -> None:
         if not _valid_container_name(name):
             raise ValueError(f"invalid container name: {name}")
-        exists = await asyncio.create_subprocess_exec(
+        inspect = await asyncio.create_subprocess_exec(
             "podman",
             "container",
-            "exists",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
             name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        code = await exists.wait()
-        if code == 0:
+        stdout, _ = await inspect.communicate()
+        if inspect.returncode == 0:
+            if stdout.strip() == b"true":
+                return
+            await self._start_container(name)
             return
+
         command = [
             "podman",
             "run",
@@ -117,6 +150,30 @@ class PodmanShellTool:
         )
         stdout, stderr = await start.communicate()
         if start.returncode != 0:
+            raise RuntimeError(stderr.decode(errors="replace") or stdout.decode(errors="replace"))
+
+    async def _start_container(self, name: str) -> None:
+        start = await asyncio.create_subprocess_exec(
+            "podman",
+            "start",
+            name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await start.communicate()
+        if start.returncode != 0:
+            raise RuntimeError(stderr.decode(errors="replace") or stdout.decode(errors="replace"))
+
+    async def _stop_container(self, name: str) -> None:
+        stop = await asyncio.create_subprocess_exec(
+            "podman",
+            "stop",
+            name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await stop.communicate()
+        if stop.returncode != 0:
             raise RuntimeError(stderr.decode(errors="replace") or stdout.decode(errors="replace"))
 
 
