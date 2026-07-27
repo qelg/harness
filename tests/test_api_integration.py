@@ -5,7 +5,7 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from llm_harness.api import create_app
-from llm_harness.core.types import LlmRunFailed
+from llm_harness.core.types import LlmRunFailed, ToolCallRequested
 
 
 def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatch):
@@ -243,3 +243,23 @@ def test_api_creates_tool_request_event(tmp_path, monkeypatch):
     assert payload["event"]["tags"]["session"] == session_id
     assert payload["event"]["tags"]["tool"] == "podman-shell"
     assert payload["event"]["payload"]["input"]["cmd"] == "echo hello"
+
+
+def test_api_includes_tool_requests_with_names_and_inputs_in_message_timeline(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"title": "tools"}).json()["id"]
+    asyncio.run(app.state.bus.append_message(ToolCallRequested(
+        session_id=session_id,
+        tool="podman-shell",
+        input={"cmd": "echo hello", "timeout": 10},
+        run_id="call_1",
+    )))
+
+    message = client.get(f"/sessions/{session_id}/messages").json()[0]
+    assert message["event_name"] == "tool.call.requested"
+    assert message["role"] == "tool_request"
+    assert message["tool"] == "podman-shell"
+    assert message["run_id"] == "call_1"
+    assert message["content"] == {"cmd": "echo hello", "timeout": 10}
