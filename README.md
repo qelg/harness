@@ -5,7 +5,7 @@ Ein kleines, erweiterbares Harness fuer session-isolierte LLM-Chats.
 ## Enthalten
 
 - LLM-Provider als Plugins: eingebaut sind `openai-codex`, `openrouter` und `mock-llm`.
-- Tools als Plugins: eingebaut ist `podman-shell`.
+- Tools als Plugins: eingebaut ist `terminal`.
 - Sessions mit Tags als persistente Events in SQLite.
 - Messages und Workflow-Zustand als persistente Events in SQLite.
 - Streaming-Antworten via Server-Sent Events.
@@ -47,7 +47,7 @@ curl -N http://127.0.0.1:8000/sessions/1/events/stream
 ```
 
 ```bash
-curl -X POST http://127.0.0.1:8000/sessions/1/tools/podman-shell \
+curl -X POST http://127.0.0.1:8000/sessions/1/tools/terminal \
   -H 'content-type: application/json' \
   -d '{"input":{"cmd":"pwd"}}'
 ```
@@ -74,7 +74,7 @@ Siehe `llm_harness/protocols.py` fuer die minimalen Interfaces.
 
 ## Container-Isolation
 
-`podman-shell` startet Container nach Bedarf:
+`terminal` startet Container nach Bedarf:
 
 - Ohne Mapping: ein Container pro Session.
 - Mit `HARNESS_TAG_CONTAINER_MAP=tag-a=name-a,tag-b=name-b`: Sessions mit diesem Tag nutzen den angegebenen Container.

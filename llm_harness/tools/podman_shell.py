@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class PodmanShellTool:
-    name = "podman-shell"
+    name = "terminal"
     description = "Run a shell command"
     input_schema = {
         "type": "object",
@@ -178,9 +178,9 @@ class PodmanShellTool:
 
 
 class PodmanShellToolConsumer(EventConsumer):
-    name = "podman-shell"
-    subscriber = "plugin:podman-shell"
-    event_filter = EventFilter(names=frozenset({"tool.call.requested"}), tags={"tool": "podman-shell"})
+    name = "terminal"
+    subscriber = "plugin:terminal"
+    event_filter = EventFilter(names=frozenset({"tool.call.requested"}), tags={"tool": "terminal"})
 
     def __init__(self, *, tool: PodmanShellTool):
         self.tool = tool

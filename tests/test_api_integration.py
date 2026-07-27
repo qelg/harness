@@ -83,7 +83,7 @@ def test_api_registers_builtin_tool_call_requester(tmp_path, monkeypatch):
 
     consumers = {plugin.name for plugin in app.state.registry.event_consumer_plugins}
     assert "tool-call-requester" in consumers
-    assert "podman-shell" in consumers
+    assert "terminal" in consumers
 
 
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):
@@ -232,7 +232,7 @@ def test_api_creates_tool_request_event(tmp_path, monkeypatch):
     session_id = session_response.json()["id"]
 
     tool_response = client.post(
-        f"/sessions/{session_id}/tools/podman-shell",
+        f"/sessions/{session_id}/tools/terminal",
         json={"input": {"cmd": "echo hello", "timeout": 10}},
     )
 
@@ -241,7 +241,7 @@ def test_api_creates_tool_request_event(tmp_path, monkeypatch):
     assert payload["status"] == "accepted"
     assert payload["event"]["name"] == "tool.call.requested"
     assert payload["event"]["tags"]["session"] == session_id
-    assert payload["event"]["tags"]["tool"] == "podman-shell"
+    assert payload["event"]["tags"]["tool"] == "terminal"
     assert payload["event"]["payload"]["input"]["cmd"] == "echo hello"
 
 
@@ -252,7 +252,7 @@ def test_api_includes_tool_requests_with_names_and_inputs_in_message_timeline(tm
     session_id = client.post("/sessions", json={"title": "tools"}).json()["id"]
     asyncio.run(app.state.bus.append_message(ToolCallRequested(
         session_id=session_id,
-        tool="podman-shell",
+        tool="terminal",
         input={"cmd": "echo hello", "timeout": 10},
         run_id="call_1",
     )))
@@ -260,6 +260,6 @@ def test_api_includes_tool_requests_with_names_and_inputs_in_message_timeline(tm
     message = client.get(f"/sessions/{session_id}/messages").json()[0]
     assert message["event_name"] == "tool.call.requested"
     assert message["role"] == "tool_request"
-    assert message["tool"] == "podman-shell"
+    assert message["tool"] == "terminal"
     assert message["run_id"] == "call_1"
     assert message["content"] == {"cmd": "echo hello", "timeout": 10}

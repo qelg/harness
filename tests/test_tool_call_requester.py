@@ -22,7 +22,7 @@ def test_tool_call_requester_creates_requests_from_responses_output(tmp_path):
                     {
                         "type": "function_call",
                         "call_id": "call_1",
-                        "name": "podman-shell",
+                        "name": "terminal",
                         "arguments": "{\"cmd\":\"echo hello\"}",
                     }
                 ],
@@ -34,7 +34,7 @@ def test_tool_call_requester_creates_requests_from_responses_output(tmp_path):
 
     requests = bus.replay(EventFilter(names=frozenset({"tool.call.requested"}), tags={"session": "sess_1"}))
     assert len(requests) == 1
-    assert requests[0].tags["tool"] == "podman-shell"
+    assert requests[0].tags["tool"] == "terminal"
     assert requests[0].tags["run"] == "call_1"
     assert requests[0].payload["input"] == {"cmd": "echo hello"}
     assert requests[0].causation_id == assistant.id
@@ -58,12 +58,12 @@ def test_tool_call_requester_creates_multiple_requests_from_openai_tool_calls(tm
                             {
                                 "id": "call_1",
                                 "type": "function",
-                                "function": {"name": "podman-shell", "arguments": "{\"cmd\":\"echo one\"}"},
+                                "function": {"name": "terminal", "arguments": "{\"cmd\":\"echo one\"}"},
                             },
                             {
                                 "id": "call_2",
                                 "type": "function",
-                                "function": {"name": "podman-shell", "arguments": "{\"cmd\":\"echo two\"}"},
+                                "function": {"name": "terminal", "arguments": "{\"cmd\":\"echo two\"}"},
                             },
                         ],
                     }
@@ -91,7 +91,7 @@ def test_tool_call_requester_is_idempotent_for_same_assistant_message(tmp_path):
                 provider="chatgpt-codex",
                 model="codex",
                 run_id="llm_1",
-                content=[{"type": "function_call", "name": "podman-shell", "arguments": "{\"cmd\":\"echo hello\"}"}],
+                content=[{"type": "function_call", "name": "terminal", "arguments": "{\"cmd\":\"echo hello\"}"}],
             )
         )
     )

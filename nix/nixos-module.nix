@@ -138,7 +138,7 @@ in
     podmanImage = lib.mkOption {
       type = lib.types.str;
       default = "llm-harness-tool:latest";
-      description = "Container image used by the built-in podman-shell tool.";
+      description = "Container image used by the built-in terminal tool.";
     };
 
     podmanImagePackage = lib.mkOption {
@@ -211,7 +211,7 @@ in
     enablePodman = lib.mkOption {
       type = lib.types.bool;
       default = true;
-      description = "Install Podman and expose it in the service PATH for the podman-shell tool.";
+      description = "Install Podman and expose it in the service PATH for the terminal tool.";
     };
 
     extraPath = lib.mkOption {

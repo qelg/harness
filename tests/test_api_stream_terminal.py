@@ -7,7 +7,7 @@ def event(name, content):
 
 
 def test_function_call_assistant_is_not_terminal():
-    assert not _is_terminal_stream_event(event("chat.message.assistant.created", [{"type": "function_call", "name": "podman-shell"}]))
+    assert not _is_terminal_stream_event(event("chat.message.assistant.created", [{"type": "function_call", "name": "terminal"}]))
 
 
 def test_text_assistant_is_terminal():
