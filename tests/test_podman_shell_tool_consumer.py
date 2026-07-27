@@ -140,12 +140,16 @@ def test_podman_shell_returns_result_for_nonzero_exit(monkeypatch):
     async def fake_ensure_container(name):
         assert name == "llm-harness-session-sess_1"
 
+    async def fake_stop_container(name):
+        assert name == "llm-harness-session-sess_1"
+
     async def fake_create_subprocess_exec(*args, stdout=None, stderr=None):
         assert args == ("podman", "exec", "llm-harness-session-sess_1", "sh", "-lc", "bad-command")
         return FakeProcess(returncode=2, stdout=b"partial\n", stderr=b"not found\n")
 
     monkeypatch.setattr("shutil.which", lambda name: "/bin/podman" if name == "podman" else None)
     monkeypatch.setattr(tool, "_ensure_container", fake_ensure_container)
+    monkeypatch.setattr(tool, "_stop_container", fake_stop_container)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     result = asyncio.run(
@@ -165,3 +169,89 @@ def test_podman_shell_returns_result_for_nonzero_exit(monkeypatch):
         "exit_code": 2,
         "success": False,
     }
+
+
+def test_podman_shell_starts_existing_stopped_container(monkeypatch):
+    tool = PodmanShellTool(settings=Settings.from_env())
+    commands = []
+
+    async def fake_create_subprocess_exec(*args, stdout=None, stderr=None):
+        commands.append(args)
+        if args[:3] == ("podman", "container", "inspect"):
+            return FakeProcess(returncode=0, stdout=b"false\n")
+        if args[:2] == ("podman", "start"):
+            return FakeProcess(returncode=0, stdout=b"llm-harness-session-sess_1\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    asyncio.run(tool._ensure_container("llm-harness-session-sess_1"))
+
+    assert commands == [
+        (
+            "podman",
+            "container",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            "llm-harness-session-sess_1",
+        ),
+        ("podman", "start", "llm-harness-session-sess_1"),
+    ]
+
+
+def test_podman_shell_stops_container_after_last_parallel_command(monkeypatch):
+    tool = PodmanShellTool(settings=Settings.from_env())
+    started = [asyncio.Event(), asyncio.Event()]
+    finish = [asyncio.Event(), asyncio.Event()]
+    ensure_calls = []
+    stop_calls = []
+    process_count = 0
+
+    class BlockingProcess(FakeProcess):
+        def __init__(self, index):
+            super().__init__(returncode=0, stdout=f"result {index}\n".encode())
+            self.index = index
+
+        async def communicate(self):
+            started[self.index].set()
+            await finish[self.index].wait()
+            return self.stdout, self.stderr
+
+    async def fake_ensure_container(name):
+        ensure_calls.append(name)
+
+    async def fake_stop_container(name):
+        stop_calls.append(name)
+
+    async def fake_create_subprocess_exec(*args, stdout=None, stderr=None):
+        nonlocal process_count
+        assert args[:2] == ("podman", "exec")
+        process = BlockingProcess(process_count)
+        process_count += 1
+        return process
+
+    monkeypatch.setattr("shutil.which", lambda name: "/bin/podman" if name == "podman" else None)
+    monkeypatch.setattr(tool, "_ensure_container", fake_ensure_container)
+    monkeypatch.setattr(tool, "_stop_container", fake_stop_container)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    async def run_parallel_commands():
+        call = ToolCall(session=ToolSession(id="sess_1"), name="podman-shell", input={"cmd": "wait"})
+        first = asyncio.create_task(tool.run(call))
+        await started[0].wait()
+        second = asyncio.create_task(tool.run(call))
+        await started[1].wait()
+
+        assert ensure_calls == ["llm-harness-session-sess_1"]
+        assert stop_calls == []
+
+        finish[0].set()
+        assert (await first).output == "result 0\n"
+        assert stop_calls == []
+
+        finish[1].set()
+        assert (await second).output == "result 1\n"
+        assert stop_calls == ["llm-harness-session-sess_1"]
+
+    asyncio.run(run_parallel_commands())
