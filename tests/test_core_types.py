@@ -7,6 +7,7 @@ from llm_harness.core.types import (
     LlmDelta,
     LlmRunFailed,
     ModelSelected,
+    SessionStateChanged,
     LlmRunRequested,
     LlmRunStarted,
     ToolMessageCreated,
@@ -102,3 +103,31 @@ def test_session_tags_include_session_chat_and_user_tags():
         "chat": session_id,
         "session_tag:project-a": "true",
     }
+
+
+def test_session_state_event_validates_state_and_read_tags():
+    running = SessionStateChanged(
+        session_id="sess_1", state="running", source_event_id=1
+    )
+    finished = SessionStateChanged(
+        session_id="sess_1",
+        state="finished",
+        source_event_id=2,
+        read="unread",
+        outcome="stop",
+    )
+
+    assert running.name == "session.state"
+    assert running.tags() == {
+        "session": "sess_1",
+        "chat": "sess_1",
+        "state": "running",
+    }
+    assert finished.tags()["read"] == "unread"
+    assert finished.payload()["outcome"] == "stop"
+    assert required_tags_for("session.state") == frozenset({"session", "state"})
+
+    with pytest.raises(ValueError, match="require a read tag"):
+        SessionStateChanged(
+            session_id="sess_1", state="finished", source_event_id=3
+        )
