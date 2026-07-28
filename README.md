@@ -40,7 +40,13 @@ curl -X POST http://127.0.0.1:8000/sessions/1/messages \
   -d '{"content":"Sag kurz hallo"}'
 ```
 
-Optional koennen Events fuer eine Session gestreamt werden:
+Die persistenten Low-Level-Events einer Session koennen inklusive Tags, Producer und Kausalitaetsmetadaten aufgelistet werden:
+
+```bash
+curl http://127.0.0.1:8000/sessions/1/events
+```
+
+Optional koennen neue Events fuer eine Session gestreamt werden:
 
 ```bash
 curl -N http://127.0.0.1:8000/sessions/1/events/stream

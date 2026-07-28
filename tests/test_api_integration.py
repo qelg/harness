@@ -110,6 +110,52 @@ def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monk
     assert messages[0]["event_name"] == "chat.message.user.created"
 
 
+def test_api_lists_all_low_level_events_for_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+
+    first = client.post("/sessions", json={"title": "first"}).json()
+    second = client.post("/sessions", json={"title": "second"}).json()
+    client.post(f"/sessions/{first['id']}/messages", json={"content": "hello"})
+    client.post(f"/sessions/{second['id']}/messages", json={"content": "other"})
+
+    response = client.get(f"/sessions/{first['id']}/events")
+
+    assert response.status_code == 200
+    events = response.json()
+    assert [event["name"] for event in events] == [
+        "session.created",
+        "chat.message.user.created",
+    ]
+    assert all(event["tags"]["session"] == first["id"] for event in events)
+    assert events[0]["producer"] == "harness-api"
+    assert events[0]["durable"] is True
+    assert events[0]["persisted_event_id"] == events[0]["id"]
+    assert set(events[0]) == {
+        "session_id",
+        "payload",
+        "id",
+        "name",
+        "tags",
+        "created_at_ms",
+        "producer",
+        "causation_id",
+        "correlation_id",
+        "durable",
+        "persisted_event_id",
+    }
+
+
+def test_api_rejects_event_list_for_unknown_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.get("/sessions/missing/events")
+
+    assert response.status_code == 404
+
+
 def test_api_lists_messages_for_later_session(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())

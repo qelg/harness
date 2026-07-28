@@ -119,6 +119,14 @@ class HarnessApiPlugin:
                 )
             ]
 
+        @app.get("/sessions/{session_id}/events")
+        async def list_events(session_id: str) -> list[dict[str, Any]]:
+            _require_session_event(bus, session_id)
+            return [
+                _dump_bus_payload(event)
+                for event in bus.replay(EventFilter(tags={"session": session_id}))
+            ]
+
         @app.get("/sessions/{session_id}/messages/updates")
         async def stream_message_updates(
             session_id: str,
@@ -379,5 +387,9 @@ def _dump_bus_payload(event: BusEvent) -> dict[str, Any]:
         "name": event.name,
         "tags": event.tags,
         "created_at_ms": event.created_at_ms,
+        "producer": event.producer,
+        "causation_id": event.causation_id,
+        "correlation_id": event.correlation_id,
+        "durable": event.durable,
         "persisted_event_id": event.persisted_event_id,
     }
