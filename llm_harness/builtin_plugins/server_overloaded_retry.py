@@ -9,10 +9,16 @@ from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import AssistantMessageCreated, LlmRunRequested, new_run_id
 
 SERVER_OVERLOADED_ERROR_CODE = "server_is_overloaded"
+SERVER_ERROR_CODE = "server_error"
+RETRYABLE_PROVIDER_ERROR_CODES = frozenset(
+    {SERVER_OVERLOADED_ERROR_CODE, SERVER_ERROR_CODE}
+)
 
 
 class ServerOverloadedRetryPlugin(EventConsumer):
-    """Retry completed provider responses that report a server overload."""
+    """Retry completed provider responses that report transient server errors."""
+
+    # Keep this identity stable so deployments retain the durable event cursor.
 
     name = "server-overloaded-retry"
     subscriber = "plugin:server-overloaded-retry"
@@ -30,7 +36,8 @@ class ServerOverloadedRetryPlugin(EventConsumer):
         self.sleep = sleep
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
-        if _provider_error_code(event) != SERVER_OVERLOADED_ERROR_CODE:
+        error_code = _provider_error_code(event)
+        if error_code not in RETRYABLE_PROVIDER_ERROR_CODES:
             return
         if self._already_retried(bus, event):
             return
@@ -50,7 +57,7 @@ class ServerOverloadedRetryPlugin(EventConsumer):
         metadata = dict(previous_metadata) if isinstance(previous_metadata, dict) else {}
         metadata.update(
             {
-                "trigger": SERVER_OVERLOADED_ERROR_CODE,
+                "trigger": error_code,
                 "retry_attempt": retry_attempt,
                 "retry_delay_seconds": delay_seconds,
                 "previous_run_id": event.tags["run"],
