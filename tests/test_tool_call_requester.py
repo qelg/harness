@@ -101,3 +101,37 @@ def test_tool_call_requester_is_idempotent_for_same_assistant_message(tmp_path):
 
     requests = bus.replay(EventFilter(names=frozenset({"tool.call.requested"}), tags={"session": "sess_1"}))
     assert len(requests) == 1
+
+
+def test_tool_call_requester_ignores_in_progress_calls_in_provider_metadata(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = ToolCallRequesterPlugin()
+
+    asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_1",
+                provider="chatgpt-codex",
+                model="codex",
+                run_id="llm_1",
+                content=[{"type": "reasoning", "status": "completed", "summary": []}],
+                metadata={
+                    "provider_response": {
+                        "output": [
+                            {
+                                "type": "function_call",
+                                "status": "in_progress",
+                                "call_id": "call_unfinished",
+                                "name": "terminal",
+                                "arguments": "{\"cmd\":\"do not run\"}",
+                            }
+                        ]
+                    }
+                },
+            )
+        )
+    )
+
+    asyncio.run(plugin.process_pending(bus))
+
+    assert bus.replay(EventFilter(names=frozenset({"tool.call.requested"}))) == []

@@ -48,6 +48,11 @@ def _tool_calls_from_event(event: EventRecord) -> list[dict[str, Any]]:
     calls.extend(_tool_calls_from_output(event.payload.get("content")))
     provider_response = event.payload.get("metadata", {}).get("provider_response")
     if isinstance(provider_response, dict):
+        # A provider error means its output is unfinished. In particular, the
+        # Responses API can return an in-progress function call alongside a
+        # server_error; that call must not race the retry plugin.
+        if isinstance(provider_response.get("error"), dict):
+            return []
         calls.extend(_tool_calls_from_output(provider_response.get("output")))
         message = provider_response.get("message")
         if isinstance(message, dict):
@@ -64,6 +69,8 @@ def _tool_calls_from_output(output: Any) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for item in output:
         if not isinstance(item, dict):
+            continue
+        if item.get("status") == "in_progress":
             continue
         if item.get("type") == "function_call":
             name = item.get("name")
@@ -86,6 +93,8 @@ def _tool_calls_from_openai_tool_calls(tool_calls: Any) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
     for call in tool_calls:
         if not isinstance(call, dict):
+            continue
+        if call.get("status") == "in_progress":
             continue
         function = call.get("function") or {}
         name = function.get("name")

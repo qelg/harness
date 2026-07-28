@@ -215,3 +215,52 @@ def test_server_overloaded_retry_is_registered_as_its_own_builtin_plugin(tmp_pat
     assert len(plugins) == 1
     assert plugins[0].subscriber == "plugin:server-overloaded-retry"
     assert plugins[0].event_filter.names == frozenset({AssistantMessageCreated.name})
+
+
+def test_server_error_with_reasoning_and_unfinished_tool_only_requests_retry(tmp_path):
+    from llm_harness.builtin_plugins.tool_call_requester import ToolCallRequesterPlugin
+
+    async def scenario():
+        bus = EventService(tmp_path / "events.db")
+        request = await bus.append_message(
+            LlmRunRequested(
+                session_id="sess_1", provider="provider", model="model", run_id="llm_1"
+            )
+        )
+        await bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_1",
+                provider="provider",
+                model="model",
+                run_id="llm_1",
+                content=[{"type": "reasoning", "status": "completed", "summary": []}],
+                metadata={
+                    "provider_response": {
+                        "output": [
+                            {"type": "reasoning", "status": "completed", "summary": []},
+                            {
+                                "type": "function_call",
+                                "status": "in_progress",
+                                "call_id": "call_unfinished",
+                                "name": "terminal",
+                                "arguments": "{\"cmd\":\"do not run\"}",
+                            },
+                        ],
+                        "error": {"code": "server_error"},
+                    }
+                },
+            ),
+            causation_id=request.id,
+            correlation_id=request.id,
+        )
+
+        await ToolCallRequesterPlugin().process_pending(bus)
+        await ServerOverloadedRetryPlugin(initial_delay_seconds=0).process_pending(bus)
+
+        assert bus.replay(EventFilter(names=frozenset({"tool.call.requested"}))) == []
+        requests = bus.replay(EventFilter(names=frozenset({LlmRunRequested.name})))
+        assert len(requests) == 2
+        assert requests[-1].producer == "server-overloaded-retry"
+        assert requests[-1].payload["metadata"]["trigger"] == "server_error"
+
+    asyncio.run(scenario())
