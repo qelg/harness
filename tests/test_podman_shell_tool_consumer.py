@@ -200,6 +200,21 @@ def test_podman_shell_starts_existing_stopped_container(monkeypatch):
     ]
 
 
+def test_podman_shell_stops_container_without_podman_grace_period(monkeypatch):
+    tool = PodmanShellTool(settings=Settings.from_env())
+    commands = []
+
+    async def fake_create_subprocess_exec(*args, stdout=None, stderr=None):
+        commands.append(args)
+        return FakeProcess(returncode=0, stdout=b"llm-harness-session-sess_1\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    asyncio.run(tool._stop_container("llm-harness-session-sess_1"))
+
+    assert commands == [("podman", "stop", "--time", "0", "llm-harness-session-sess_1")]
+
+
 def test_podman_shell_stops_container_after_last_parallel_command(monkeypatch):
     tool = PodmanShellTool(settings=Settings.from_env())
     started = [asyncio.Event(), asyncio.Event()]
