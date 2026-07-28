@@ -28,6 +28,7 @@ def test_chatgpt_codex_provider_requires_login_token(tmp_path, monkeypatch):
 def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     monkeypatch.setenv("HARNESS_LOG_PROVIDER_EVENTS", "1")
+    monkeypatch.setenv("HARNESS_PROMPT_CACHE_KEY", "shared-harness")
     app = create_app()
     conn = app.state.bus.conn
     ensure_oauth_schema(conn)
@@ -70,6 +71,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
             }
         ]
         assert payload["store"] is False
+        assert payload["prompt_cache_key"] == "shared-harness"
         return httpx.Response(
             200,
             content=(
@@ -140,6 +142,7 @@ def test_chatgpt_codex_provider_combines_response_sse_events(tmp_path, monkeypat
         )
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert "prompt_cache_key" not in json.loads(request.content)
         return httpx.Response(
             200,
             content=(

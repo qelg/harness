@@ -68,3 +68,9 @@ def test_settings_rejects_duplicate_discovered_skill_names(tmp_path, monkeypatch
 
     with pytest.raises(ValueError, match="duplicate skill name"):
         Settings.from_env()
+
+
+def test_settings_reads_prompt_cache_key(monkeypatch):
+    monkeypatch.setenv("HARNESS_PROMPT_CACHE_KEY", "shared-harness")
+
+    assert Settings.from_env().prompt_cache_key == "shared-harness"

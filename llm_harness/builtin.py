@@ -37,6 +37,7 @@ def register(registry, *, bus=None) -> None:
             base_url=settings.openrouter_base_url,
             api_key=settings.openrouter_api_key,
             extra_headers={"HTTP-Referer": "http://localhost", "X-Title": "LLM Harness"},
+            prompt_cache_key=settings.prompt_cache_key,
             log_provider_events=settings.log_provider_events,
         )
     )

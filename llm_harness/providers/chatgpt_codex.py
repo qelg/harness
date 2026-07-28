@@ -49,6 +49,8 @@ class ChatGPTCodexProvider:
             "input": _responses_input(messages),
             "store": False,
         }
+        if self.settings.prompt_cache_key is not None:
+            payload["prompt_cache_key"] = self.settings.prompt_cache_key
         if tools:
             payload["tools"] = [_responses_tool(tool) for tool in tools]
         if self.settings.log_provider_events:
