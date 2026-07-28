@@ -196,3 +196,57 @@ def test_llm_provider_runner_writes_failed_event_for_unknown_provider(tmp_path):
     assert len(failed) == 1
     assert failed[0].payload["error"] == "unknown provider: missing"
     assert failed[0].causation_id == request.id
+
+
+class InProgressOutputProvider:
+    name = "in-progress-output"
+
+    async def stream_response(
+        self,
+        *,
+        model: str,
+        messages: Sequence[Message],
+        tools: Sequence[ToolSpec] = (),
+    ) -> AsyncIterator[ProviderStreamEvent]:
+        yield ProviderStreamEvent(
+            type="completed",
+            response={
+                "output": [
+                    {"type": "reasoning", "status": "completed", "summary": []},
+                    {
+                        "type": "function_call",
+                        "status": "in_progress",
+                        "call_id": "call_unfinished",
+                        "name": "terminal",
+                        "arguments": "{\"cmd\":\"do not run\"}",
+                    },
+                ],
+                "error": {"code": "server_error"},
+            },
+        )
+
+
+def test_llm_provider_runner_omits_in_progress_output_from_content_but_keeps_metadata(tmp_path):
+    asyncio.run(_assert_in_progress_output_is_only_in_metadata(tmp_path))
+
+
+async def _assert_in_progress_output_is_only_in_metadata(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    registry = Registry()
+    registry.add_provider(InProgressOutputProvider())
+
+    await bus.append_message(
+        LlmRunRequested(
+            session_id="sess_1", provider="in-progress-output", model="test-model", run_id="llm_1"
+        )
+    )
+    await LlmProviderRunnerPlugin().process_pending(bus, registry=registry)
+
+    assistant = bus.replay(
+        EventFilter(names=frozenset({"chat.message.assistant.created"}), tags={"run": "llm_1"})
+    )[0]
+    assert assistant.payload["content"] == [
+        {"type": "reasoning", "status": "completed", "summary": []}
+    ]
+    assert assistant.payload["metadata"]["provider_response"]["output"][1]["status"] == "in_progress"
+    assert assistant.payload["metadata"]["provider_response"]["error"]["code"] == "server_error"

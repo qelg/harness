@@ -186,7 +186,14 @@ def _message_from_event(event: EventRecord) -> Message:
 
 def _assistant_content(content_parts: list[str], provider_response: dict[str, Any] | None) -> Any:
     if provider_response and provider_response.get("output") is not None:
-        return provider_response["output"]
+        output = provider_response["output"]
+        if isinstance(output, list):
+            return [
+                item
+                for item in output
+                if not isinstance(item, dict) or item.get("status") != "in_progress"
+            ]
+        return output
     return "".join(content_parts)
 
 
