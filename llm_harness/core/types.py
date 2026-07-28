@@ -15,6 +15,8 @@ MODEL = "model"
 TOOL = "tool"
 TOOLSET = "toolset"
 RUN = "run"
+STATE = "state"
+READ = "read"
 
 
 class Role(StrEnum):
@@ -93,6 +95,39 @@ class SessionCreated:
 
     def tags(self) -> dict[str, str]:
         tags = session_tags(self.session_id, *self.session_tags)
+        return tags
+
+
+@dataclass(frozen=True)
+class SessionStateChanged:
+    session_id: str
+    state: str
+    source_event_id: int
+    read: str | None = None
+    outcome: str | None = None
+
+    name: str = "session.state"
+
+    def __post_init__(self) -> None:
+        if self.state not in {"running", "finished"}:
+            raise ValueError(f"invalid session state: {self.state}")
+        if self.read is not None and self.read not in {"unread", "read"}:
+            raise ValueError(f"invalid session read state: {self.read}")
+        if self.state == "finished" and self.read is None:
+            raise ValueError("finished session states require a read tag")
+        if self.state == "running" and self.read is not None:
+            raise ValueError("running session states cannot have a read tag")
+
+    def payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"source_event_id": self.source_event_id}
+        if self.outcome is not None:
+            payload["outcome"] = self.outcome
+        return payload
+
+    def tags(self) -> dict[str, str]:
+        tags = {SESSION: self.session_id, CHAT: self.session_id, STATE: self.state}
+        if self.read is not None:
+            tags[READ] = self.read
         return tags
 
 
@@ -322,6 +357,7 @@ class ToolCallRequested:
 
 REQUIRED_TAGS: dict[str, frozenset[str]] = {
     SessionCreated.name: frozenset({SESSION}),
+    SessionStateChanged.name: frozenset({SESSION, STATE}),
     UserMessageCreated.name: frozenset({SESSION}),
     AssistantMessageCreated.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     ModelSelected.name: frozenset({PROVIDER, MODEL}),

@@ -309,3 +309,123 @@ def test_api_includes_tool_requests_with_names_and_inputs_in_message_timeline(tm
     assert message["tool"] == "terminal"
     assert message["run_id"] == "call_1"
     assert message["content"] == {"cmd": "echo hello", "timeout": 10}
+
+
+def test_api_lists_latest_session_states_by_activity(tmp_path, monkeypatch):
+    from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+    from llm_harness.core.events import EventFilter
+    from llm_harness.core.types import AssistantMessageCreated, UserMessageCreated
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    plugin = SessionStatePlugin()
+
+    first = client.post("/sessions", json={"title": "first"}).json()["id"]
+    second = client.post("/sessions", json={"title": "second"}).json()["id"]
+    first_message = asyncio.run(
+        app.state.bus.append_message(UserMessageCreated(session_id=first, content="one"))
+    )
+    asyncio.run(plugin.process_event(app.state.bus, first_message))
+    second_message = asyncio.run(
+        app.state.bus.append_message(UserMessageCreated(session_id=second, content="two"))
+    )
+    asyncio.run(plugin.process_event(app.state.bus, second_message))
+    answer = asyncio.run(
+        app.state.bus.append_message(
+            AssistantMessageCreated(
+                session_id=first,
+                content="done",
+                provider="mock-llm",
+                model="test-model",
+                run_id="llm_1",
+                metadata={"provider_response": {"finish_reason": "stop"}},
+            )
+        )
+    )
+    asyncio.run(plugin.process_event(app.state.bus, answer))
+
+    response = client.get("/session-states")
+
+    assert response.status_code == 200
+    states = response.json()
+    assert [state["session_id"] for state in states] == [first, second]
+    assert states[0]["state"] == "finished"
+    assert states[0]["read"] == "unread"
+    assert states[0]["outcome"] == "stop"
+    assert states[0]["source_event_id"] == answer.id
+    assert states[1]["state"] == "running"
+    assert states[1]["read"] is None
+
+    history = client.get(f"/sessions/{first}/state-events")
+    assert history.status_code == 200
+    assert [state["state"] for state in history.json()] == ["running", "finished"]
+    state_events = app.state.bus.replay(
+        EventFilter(names=frozenset({"session.state"}), tags={"session": first})
+    )
+    assert [event.id for event in state_events] == [
+        state["event_id"] for state in history.json()
+    ]
+
+
+def test_api_rejects_state_history_for_unknown_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.get("/sessions/missing/state-events")
+
+    assert response.status_code == 404
+
+
+def test_api_marks_finished_session_read_idempotently(tmp_path, monkeypatch):
+    from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+    from llm_harness.core.types import AssistantMessageCreated
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"title": "finished"}).json()["id"]
+    answer = asyncio.run(
+        app.state.bus.append_message(
+            AssistantMessageCreated(
+                session_id=session_id,
+                content="done",
+                provider="mock-llm",
+                model="test-model",
+                run_id="llm_1",
+            )
+        )
+    )
+    asyncio.run(SessionStatePlugin().process_event(app.state.bus, answer))
+
+    first = client.post(f"/sessions/{session_id}/state/read")
+    second = client.post(f"/sessions/{session_id}/state/read")
+
+    assert first.status_code == 200
+    assert first.json()["state"] == "finished"
+    assert first.json()["read"] == "read"
+    assert first.json()["source_event_id"] == answer.id
+    assert second.json()["event_id"] == first.json()["event_id"]
+    assert [state["read"] for state in client.get(
+        f"/sessions/{session_id}/state-events"
+    ).json()] == ["unread", "read"]
+
+
+def test_api_does_not_mark_running_session_read(tmp_path, monkeypatch):
+    from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+    from llm_harness.core.types import UserMessageCreated
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"title": "running"}).json()["id"]
+    message = asyncio.run(
+        app.state.bus.append_message(
+            UserMessageCreated(session_id=session_id, content="hello")
+        )
+    )
+    asyncio.run(SessionStatePlugin().process_event(app.state.bus, message))
+
+    response = client.post(f"/sessions/{session_id}/state/read")
+
+    assert response.status_code == 409

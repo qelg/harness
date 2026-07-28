@@ -246,3 +246,26 @@ HARNESS_CODEX_OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
 HARNESS_CODEX_OAUTH_BASE_URL=https://chatgpt.com/backend-api/codex
 HARNESS_CODEX_OAUTH_REFRESH_SKEW_SECONDS=120
 ```
+
+## Session-Zustaende
+
+Das eingebaute `session-state` Event-Consumer-Plugin projiziert Chat-Aktivitaet in persistente `session.state` Events:
+
+- Eine neue `chat.message.user.created` Nachricht erzeugt `state=running`.
+- Eine finale Assistant-Antwort ohne Tool-Call oder ein fehlgeschlagener LLM-Run erzeugt `state=finished` und zunaechst `read=unread`.
+- Assistant-Nachrichten mit Tool-Calls und Provider-Ergebnisse, die automatisch wiederholt werden, beenden die Session nicht.
+
+Jedes State-Event traegt `session` und `chat` Tags. `source_event_id` im Payload sowie `causation_id` referenzieren die Nachricht bzw. den fehlgeschlagenen Run, der den Zustand ausgeloest hat. Bei einem fertigen Provider-Ergebnis beschreibt `outcome` den Abschlussgrund, zum Beispiel `stop`, `completed` oder `failed`.
+
+Die fuer eine Uebersicht optimierte API gibt pro Session nur den neuesten Zustand zurueck, absteigend nach letzter Aktivitaet:
+
+```bash
+curl http://127.0.0.1:8000/session-states
+```
+
+Die vollstaendige State-Historie einer Session ist ebenfalls verfuegbar. Ein fertiger Zustand kann idempotent als gelesen markiert werden:
+
+```bash
+curl http://127.0.0.1:8000/sessions/sess_123/state-events
+curl -X POST http://127.0.0.1:8000/sessions/sess_123/state/read
+```

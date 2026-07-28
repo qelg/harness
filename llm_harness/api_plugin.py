@@ -15,6 +15,7 @@ from llm_harness.core.types import (
     MESSAGE_CREATED_NAMES,
     ModelSelected,
     SessionCreated,
+    SessionStateChanged,
     ToolCallRequested,
     UserMessageCreated,
     new_run_id,
@@ -108,6 +109,64 @@ class HarnessApiPlugin:
             if tag is None:
                 return sessions
             return [session for session in sessions if tag in session["tags"]]
+
+        @app.get("/session-states")
+        async def list_session_states() -> list[dict[str, Any]]:
+            """Return each session's latest state, newest activity first."""
+            latest_by_session: dict[str, BusEvent] = {}
+            for event in bus.replay(
+                EventFilter(names=frozenset({SessionStateChanged.name}))
+            ):
+                latest_by_session[event.tags["session"]] = event
+            return [
+                _session_state_from_event(event)
+                for event in sorted(
+                    latest_by_session.values(), key=lambda item: item.id, reverse=True
+                )
+            ]
+
+        @app.post("/sessions/{session_id}/state/read")
+        async def mark_session_state_read(session_id: str) -> dict[str, Any]:
+            _require_session_event(bus, session_id)
+            state_events = bus.replay(
+                EventFilter(
+                    names=frozenset({SessionStateChanged.name}),
+                    tags={"session": session_id},
+                )
+            )
+            if not state_events or state_events[-1].tags["state"] != "finished":
+                raise HTTPException(
+                    status_code=409, detail="only a finished session can be marked read"
+                )
+            latest = state_events[-1]
+            if latest.tags.get("read") == "read":
+                return _session_state_from_event(latest)
+            event = await bus.append_message(
+                SessionStateChanged(
+                    session_id=session_id,
+                    state="finished",
+                    source_event_id=latest.payload["source_event_id"],
+                    read="read",
+                    outcome=latest.payload.get("outcome"),
+                ),
+                producer="harness-api",
+                causation_id=latest.id,
+                correlation_id=latest.correlation_id or latest.id,
+            )
+            return _session_state_from_event(event)
+
+        @app.get("/sessions/{session_id}/state-events")
+        async def list_session_state_events(session_id: str) -> list[dict[str, Any]]:
+            _require_session_event(bus, session_id)
+            return [
+                _session_state_from_event(event)
+                for event in bus.replay(
+                    EventFilter(
+                        names=frozenset({SessionStateChanged.name}),
+                        tags={"session": session_id},
+                    )
+                )
+            ]
 
         @app.get("/sessions/{session_id}/messages")
         async def list_messages(session_id: str) -> list[dict[str, Any]]:
@@ -258,6 +317,18 @@ def _require_toolsets(registry: Registry, toolsets: list[str]) -> None:
     unknown = sorted(set(toolsets) - set(registry.toolsets))
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown toolset: {', '.join(unknown)}")
+
+
+def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
+    return {
+        "session_id": event.tags["session"],
+        "state": event.tags["state"],
+        "read": event.tags.get("read"),
+        "source_event_id": event.payload["source_event_id"],
+        "outcome": event.payload.get("outcome"),
+        "event_id": event.id,
+        "created_at_ms": event.created_at_ms,
+    }
 
 
 def _session_from_events(event: BusEvent) -> dict[str, Any]:

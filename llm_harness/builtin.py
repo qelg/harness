@@ -7,6 +7,7 @@ from llm_harness.auth_plugins.openai_codex_device import OpenAICodexDeviceAuthPl
 from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
 from llm_harness.builtin_plugins.server_overloaded_retry import ServerOverloadedRetryPlugin
+from llm_harness.builtin_plugins.session_state import SessionStatePlugin
 from llm_harness.builtin_plugins.tool_call_requester import ToolCallRequesterPlugin
 from llm_harness.builtin_plugins.tool_result_llm_requester import ToolResultLlmRequesterPlugin
 from llm_harness.providers.chatgpt_codex import ChatGPTCodexProvider
@@ -49,6 +50,7 @@ def register(registry, *, bus=None) -> None:
     registry.add_toolset(DefaultToolSet())
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
+    registry.add_event_consumer_plugin(SessionStatePlugin())
     registry.add_event_consumer_plugin(LlmRunRequesterPlugin(settings=settings))
     registry.add_event_consumer_plugin(LlmProviderRunnerPlugin())
     registry.add_event_consumer_plugin(ServerOverloadedRetryPlugin())
