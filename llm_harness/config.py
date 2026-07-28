@@ -19,6 +19,7 @@ class Settings:
     openai_base_url: str
     openrouter_api_key: str | None
     openrouter_base_url: str
+    prompt_cache_key: str | None
     podman_image: str
     podman_mount_nix_store: bool
     tag_container_map: dict[str, str]
@@ -50,6 +51,7 @@ class Settings:
             openai_base_url=os.getenv("HARNESS_OPENAI_BASE_URL", "https://api.openai.com/v1"),
             openrouter_api_key=os.getenv("HARNESS_OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY"),
             openrouter_base_url=os.getenv("HARNESS_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            prompt_cache_key=os.getenv("HARNESS_PROMPT_CACHE_KEY") or None,
             podman_image=os.getenv("HARNESS_PODMAN_IMAGE", "docker.io/library/python:3.12-slim"),
             podman_mount_nix_store=parse_bool(os.getenv("HARNESS_PODMAN_MOUNT_NIX_STORE", "0")),
             tag_container_map=parse_tag_container_map(os.getenv("HARNESS_TAG_CONTAINER_MAP", "")),

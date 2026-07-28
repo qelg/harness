@@ -19,12 +19,14 @@ class OpenAICompatibleProvider:
         base_url: str,
         api_key: str | None,
         extra_headers: dict[str, str] | None = None,
+        prompt_cache_key: str | None = None,
         log_provider_events: bool = False,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.extra_headers = extra_headers or {}
+        self.prompt_cache_key = prompt_cache_key
         self.log_provider_events = log_provider_events
 
     async def stream_chat(
@@ -54,6 +56,8 @@ class OpenAICompatibleProvider:
             "stream_options": {"include_usage": True},
             "messages": [{"role": message.role.value, "content": message.content} for message in messages],
         }
+        if self.prompt_cache_key is not None:
+            payload["prompt_cache_key"] = self.prompt_cache_key
         if tools:
             payload["tools"] = [_openai_tool(tool) for tool in tools]
         if self.log_provider_events:

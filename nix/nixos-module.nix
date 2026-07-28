@@ -53,6 +53,16 @@ in
       description = "OpenRouter OpenAI-compatible base URL.";
     };
 
+    promptCacheKey = lib.mkOption {
+      type = lib.types.nullOr lib.types.nonEmptyStr;
+      default = null;
+      example = "llm-harness";
+      description = ''
+        Optional fixed prompt cache key sent with OpenRouter and ChatGPT Codex requests.
+        A stable key improves prompt-cache routing across sessions.
+      '';
+    };
+
     defaultToolsets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ "default" ];
@@ -263,6 +273,9 @@ in
           HARNESS_PODMAN_MOUNT_NIX_STORE = if cfg.podmanMountNixStore then "1" else "0";
           HARNESS_TAG_CONTAINER_MAP = tagContainerMapValue;
           PYTHONPATH = pluginPythonPath;
+        }
+        // lib.optionalAttrs (cfg.promptCacheKey != null) {
+          HARNESS_PROMPT_CACHE_KEY = cfg.promptCacheKey;
         }
         // lib.optionalAttrs (cfg.chatgptOAuth.authorizationUrl != null) {
           HARNESS_CHATGPT_OAUTH_AUTHORIZATION_URL = cfg.chatgptOAuth.authorizationUrl;

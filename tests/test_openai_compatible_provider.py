@@ -45,6 +45,7 @@ def test_openai_compatible_provider_accumulates_reasoning_tool_calls_and_usage(m
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert payload["stream_options"] == {"include_usage": True}
+        assert "prompt_cache_key" not in payload
         return httpx.Response(
             200,
             content=(
@@ -154,3 +155,33 @@ def test_openai_compatible_provider_keeps_stream_chunks_when_logging_enabled(mon
 
     completed = asyncio.run(consume_events())[-1].response
     assert completed["stream_chunks"][0]["choices"][0]["delta"]["content"] == "hi"
+
+
+def test_openai_compatible_provider_sends_fixed_prompt_cache_key(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["prompt_cache_key"] == "shared-harness"
+        return httpx.Response(
+            200,
+            content=b'data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*args, **kwargs):
+        return original_client(transport=transport, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("llm_harness.providers.openai_compatible.httpx.AsyncClient", client_factory)
+    provider = OpenAICompatibleProvider(
+        name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+        prompt_cache_key="shared-harness",
+    )
+
+    async def consume_events() -> list:
+        return [event async for event in provider.stream_response(model="test", messages=[])]
+
+    assert asyncio.run(consume_events())[0].delta == "ok"
