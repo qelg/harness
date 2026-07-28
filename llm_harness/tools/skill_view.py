@@ -42,10 +42,16 @@ class SkillViewTool:
 
     def __init__(self, *, settings: Settings):
         self.skills = {skill.name: skill for skill in settings.skills}
-        available = ", ".join(sorted(self.skills)) or "(none configured)"
+        if self.skills:
+            available = "\n".join(
+                f"- {skill.name}: {skill.description}" if skill.description else f"- {skill.name}"
+                for skill in sorted(self.skills.values(), key=lambda configured: configured.name)
+            )
+        else:
+            available = "- (none configured)"
         self.description = (
             "Read a configured skill's SKILL.md instructions or one of its supporting files. "
-            f"Available skills: {available}."
+            f"Available skills and descriptions:\n{available}"
         )
 
     async def run(self, call: ToolCall) -> ToolResult:

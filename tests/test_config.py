@@ -34,16 +34,30 @@ def test_settings_reads_provider_event_logging_flag(monkeypatch):
 def test_settings_discovers_skills_in_configured_directories(tmp_path, monkeypatch):
     directory = tmp_path / "skills"
     (directory / "python").mkdir(parents=True)
-    (directory / "python" / "SKILL.md").write_text("# Python\n")
+    (directory / "python" / "SKILL.md").write_text(
+        "---\nname: python\ndescription: Help with Python code.\n---\n# Python\n"
+    )
     (directory / "without-instructions").mkdir()
     (directory / "README.md").write_text("not a skill\n")
     monkeypatch.setenv("HARNESS_SKILLS", json.dumps([str(directory)]))
 
     skills = Settings.from_env().skills
 
-    assert [(skill.name, skill.path) for skill in skills] == [
-        ("python", directory / "python")
+    assert [(skill.name, skill.path, skill.description) for skill in skills] == [
+        ("python", directory / "python", "Help with Python code.")
     ]
+
+
+def test_settings_reads_quoted_skill_description(tmp_path, monkeypatch):
+    directory = tmp_path / "skills"
+    skill = directory / "review"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        '---\nname: review\ndescription: "Review code: carefully."\n---\n'
+    )
+    monkeypatch.setenv("HARNESS_SKILLS", json.dumps([str(directory)]))
+
+    assert Settings.from_env().skills[0].description == "Review code: carefully."
 
 
 def test_settings_discovers_linked_skill_directories(tmp_path, monkeypatch):

@@ -10,6 +10,7 @@ from pathlib import Path
 class Skill:
     name: str
     path: Path
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,5 +119,33 @@ def parse_skills(raw: str) -> tuple[Skill, ...]:
             if name in names:
                 raise ValueError(f"duplicate skill name in HARNESS_SKILLS directories: {name}")
             names.add(name)
-            skills.append(Skill(name=name, path=path))
+            skills.append(
+                Skill(name=name, path=path, description=parse_skill_description(path / "SKILL.md"))
+            )
     return tuple(skills)
+
+
+def parse_skill_description(path: Path) -> str | None:
+    """Return the single-line description from a SKILL.md YAML header."""
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        key, separator, value = line.partition(":")
+        if separator and key.strip() == "description":
+            description = value.strip()
+            if len(description) >= 2 and description[0] == description[-1] == "'":
+                description = description[1:-1].replace("''", "'")
+            elif len(description) >= 2 and description[0] == description[-1] == '"':
+                try:
+                    parsed = json.loads(description)
+                except json.JSONDecodeError:
+                    pass
+                else:
+                    if isinstance(parsed, str):
+                        description = parsed
+            return description or None
+    return None

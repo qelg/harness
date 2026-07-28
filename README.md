@@ -95,7 +95,7 @@ Das eingebaute Tool `skill_view` macht kuratierte Anweisungen und deren Begleitd
 {"name":"nixos","file":"references/modules.md","line_start":20,"line_end":80}
 ```
 
-Die Dateiaufloesung bleibt immer innerhalb des jeweiligen Skill-Verzeichnisses. Konfiguriert werden ein oder mehrere Sammelverzeichnisse; jedes direkte Unterverzeichnis mit einer `SKILL.md` wird automatisch als Skill erkannt. Der Verzeichnisname wird als Skill-Name verwendet und alle erkannten Namen werden in die Tool-Beschreibung aufgenommen:
+Die Dateiaufloesung bleibt immer innerhalb des jeweiligen Skill-Verzeichnisses. Konfiguriert werden ein oder mehrere Sammelverzeichnisse; jedes direkte Unterverzeichnis mit einer `SKILL.md` wird automatisch als Skill erkannt. Der Verzeichnisname wird als Skill-Name verwendet. Name und `description` aus dem YAML-Front-Matter der jeweiligen `SKILL.md` werden in die Tool-Beschreibung aufgenommen, damit das Modell schon vor einem Tool-Aufruf erkennen kann, wann ein Skill relevant ist:
 
 ```text
 /srv/skills/

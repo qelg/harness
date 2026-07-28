@@ -14,7 +14,10 @@ def configured_tool(tmp_path, monkeypatch):
     skill_directory = tmp_path / "skills"
     skill = skill_directory / "python"
     (skill / "references").mkdir(parents=True)
-    (skill / "SKILL.md").write_text("# Python\nUse type hints.\n")
+    (skill / "SKILL.md").write_text(
+        "---\nname: python\ndescription: Help write and maintain Python code.\n---\n"
+        "# Python\nUse type hints.\n"
+    )
     (skill / "references" / "testing.md").write_text("one\ntwo\nthree\n")
     monkeypatch.setenv("HARNESS_SKILLS", f'["{skill_directory}"]')
     return SkillViewTool(settings=Settings.from_env())
@@ -26,12 +29,15 @@ def call(tool, input_):
 
 def test_description_lists_configured_skills(tmp_path, monkeypatch):
     tool = configured_tool(tmp_path, monkeypatch)
-    assert "Available skills: python." in tool.description
+    assert (
+        "Available skills and descriptions:\n"
+        "- python: Help write and maintain Python code."
+    ) in tool.description
 
 
 def test_reads_skill_instructions_and_supporting_file_range(tmp_path, monkeypatch):
     tool = configured_tool(tmp_path, monkeypatch)
-    assert call(tool, {"name": "python"}).output == "# Python\nUse type hints.\n"
+    assert call(tool, {"name": "python"}).output.endswith("# Python\nUse type hints.\n")
 
     result = call(
         tool,
@@ -63,5 +69,5 @@ def test_consumer_persists_tool_result(tmp_path, monkeypatch):
 
     messages = bus.replay(EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "tool_1"}))
     assert len(messages) == 1
-    assert messages[0].payload["content"].startswith("# Python")
+    assert "# Python\nUse type hints." in messages[0].payload["content"]
     assert messages[0].payload["metadata"]["skill"] == "python"
