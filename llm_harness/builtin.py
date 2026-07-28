@@ -13,6 +13,7 @@ from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
 from llm_harness.toolsets import DefaultToolSet
 from llm_harness.tools.podman_shell import PodmanShellTool, PodmanShellToolConsumer
+from llm_harness.tools.skill_view import SkillViewTool, SkillViewToolConsumer
 
 
 def register(registry, *, bus=None) -> None:
@@ -41,6 +42,9 @@ def register(registry, *, bus=None) -> None:
     terminal = PodmanShellTool(settings=settings)
     registry.add_tool(terminal)
     registry.add_event_consumer_plugin(PodmanShellToolConsumer(tool=terminal))
+    skill_view = SkillViewTool(settings=settings)
+    registry.add_tool(skill_view)
+    registry.add_event_consumer_plugin(SkillViewToolConsumer(tool=skill_view))
     registry.add_toolset(DefaultToolSet())
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))

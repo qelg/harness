@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Skill:
+    name: str
+    path: Path
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,7 @@ class Settings:
     default_model: str
     default_toolsets: tuple[str, ...]
     log_provider_events: bool
+    skills: tuple[Skill, ...] = ()
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -63,6 +71,7 @@ class Settings:
             default_model=os.getenv("HARNESS_DEFAULT_MODEL", "test-model"),
             default_toolsets=parse_csv(os.getenv("HARNESS_DEFAULT_TOOLSETS", "default")),
             log_provider_events=parse_bool(os.getenv("HARNESS_LOG_PROVIDER_EVENTS", "0")),
+            skills=parse_skills(os.getenv("HARNESS_SKILLS", "[]")),
         )
 
 
@@ -84,3 +93,30 @@ def parse_bool(raw: str) -> bool:
 
 def parse_csv(raw: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def parse_skills(raw: str) -> tuple[Skill, ...]:
+    try:
+        configured = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("HARNESS_SKILLS must be a JSON list of directories") from exc
+    if not isinstance(configured, list) or any(
+        not isinstance(item, str) or not item.strip() for item in configured
+    ):
+        raise ValueError("HARNESS_SKILLS must be a JSON list of directories")
+
+    skills: list[Skill] = []
+    names: set[str] = set()
+    for item in configured:
+        directory = Path(item)
+        if not directory.is_dir():
+            raise ValueError(f"skill directory does not exist or is not a directory: {directory}")
+        for path in sorted(directory.iterdir(), key=lambda candidate: candidate.name):
+            if not path.is_dir() or not (path / "SKILL.md").is_file():
+                continue
+            name = path.name
+            if name in names:
+                raise ValueError(f"duplicate skill name in HARNESS_SKILLS directories: {name}")
+            names.add(name)
+            skills.append(Skill(name=name, path=path))
+    return tuple(skills)

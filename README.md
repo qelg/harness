@@ -5,7 +5,7 @@ Ein kleines, erweiterbares Harness fuer session-isolierte LLM-Chats.
 ## Enthalten
 
 - LLM-Provider als Plugins: eingebaut sind `openai-codex`, `openrouter` und `mock-llm`.
-- Tools als Plugins: eingebaut ist `terminal`.
+- Tools als Plugins: eingebaut sind `terminal` und `skill_view`.
 - Sessions mit Tags als persistente Events in SQLite.
 - Messages und Workflow-Zustand als persistente Events in SQLite.
 - Streaming-Antworten via Server-Sent Events.
@@ -83,6 +83,32 @@ Siehe `llm_harness/protocols.py` fuer die minimalen Interfaces.
 
 Podman muss auf dem Host installiert sein.
 
+## Skills
+
+Das eingebaute Tool `skill_view` macht kuratierte Anweisungen und deren Begleitdateien fuer das Modell lesbar. Ein Aufruf mit nur `name` liest `SKILL.md`; mit `file` kann eine Datei relativ zum Skill-Verzeichnis gelesen werden. Optional begrenzen `line_start` und `line_end` die Ausgabe (1-basiert, inklusive):
+
+```json
+{"name":"nixos"}
+```
+
+```json
+{"name":"nixos","file":"references/modules.md","line_start":20,"line_end":80}
+```
+
+Die Dateiaufloesung bleibt immer innerhalb des jeweiligen Skill-Verzeichnisses. Konfiguriert werden ein oder mehrere Sammelverzeichnisse; jedes direkte Unterverzeichnis mit einer `SKILL.md` wird automatisch als Skill erkannt. Der Verzeichnisname wird als Skill-Name verwendet und alle erkannten Namen werden in die Tool-Beschreibung aufgenommen:
+
+```text
+/srv/skills/
+├── nixos/SKILL.md
+└── python/SKILL.md
+```
+
+Direkt ueber die Umgebung werden die Sammelverzeichnisse als JSON-Liste gesetzt:
+
+```bash
+HARNESS_SKILLS='["/srv/skills"]'
+```
+
 Die Flake baut ausserdem ein kleines Tool-Image fuer Podman:
 
 ```bash
@@ -143,6 +169,10 @@ Die Harness kann als Flake-Input eingebunden werden:
             tagContainerMap = {
               "project-a" = "llm-harness-project-a";
             };
+
+            # Entdeckt z. B. ./skills/nixos/SKILL.md und
+            # ./skills/python/SKILL.md automatisch.
+            skills = [ ./skills ];
 
             plugins = [
               # Python-Packages mit Entry Points in "llm_harness.plugins"
