@@ -71,6 +71,51 @@ async def _assert_server_overloaded_response_is_retried_after_initial_delay(tmp_
     assert retry.correlation_id == 999
 
 
+
+def test_server_error_response_is_retried_after_initial_delay(tmp_path):
+    asyncio.run(_assert_server_error_response_is_retried_after_initial_delay(tmp_path))
+
+
+async def _assert_server_error_response_is_retried_after_initial_delay(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    sleep = RecordingSleep()
+    plugin = ServerOverloadedRetryPlugin(sleep=sleep)
+    request = await bus.append_message(
+        LlmRunRequested(
+            session_id="sess_1",
+            provider="chatgpt-codex",
+            model="codex-model",
+            run_id="llm_1",
+            toolsets=("default",),
+        )
+    )
+    assistant = await bus.append_message(
+        AssistantMessageCreated(
+            session_id="sess_1",
+            content="",
+            provider="chatgpt-codex",
+            model="codex-model",
+            run_id="llm_1",
+            metadata={"provider_response": {"error": {"code": "server_error"}}},
+        ),
+        causation_id=request.id,
+        correlation_id=request.id,
+    )
+
+    await plugin.process_pending(bus)
+
+    requests = bus.replay(
+        EventFilter(names=frozenset({LlmRunRequested.name}), tags={"session": "sess_1"})
+    )
+    assert sleep.delays == [30.0]
+    assert len(requests) == 2
+    retry = requests[-1]
+    assert retry.payload["metadata"]["trigger"] == "server_error"
+    assert retry.payload["metadata"]["retry_attempt"] == 1
+    assert retry.payload["metadata"]["retry_delay_seconds"] == 30.0
+    assert retry.payload["metadata"]["assistant_message_event_id"] == assistant.id
+    assert retry.causation_id == assistant.id
+
 def test_repeated_server_overload_uses_exponential_backoff(tmp_path):
     asyncio.run(_assert_repeated_server_overload_uses_exponential_backoff(tmp_path))
 

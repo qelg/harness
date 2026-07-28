@@ -26,7 +26,7 @@ Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung is
 | Builtins | `llm_harness/builtin.py` | Registrierung der eingebauten OpenAI-kompatiblen Provider und des Podman-Tools. |
 | LLM Run Requester | `llm_harness/builtin_plugins/llm_run_requester.py` | Erzeugt `llm.run.requested` aus `chat.message.user.created`. |
 | LLM Provider Runner | `llm_harness/builtin_plugins/llm_provider_runner.py` | Fuehrt `llm.run.requested` gegen registrierte Provider aus und streamt `llm.delta`. |
-| Server Overloaded Retry | `llm_harness/builtin_plugins/server_overloaded_retry.py` | Wiederholt Provider-Antworten mit `metadata.provider_response.error.code=server_is_overloaded` nach exponentiellem Backoff ab 30 Sekunden. |
+| Server Overloaded Retry | `llm_harness/builtin_plugins/server_overloaded_retry.py` | Wiederholt Provider-Antworten mit `metadata.provider_response.error.code=server_is_overloaded` oder `server_error` nach exponentiellem Backoff ab 30 Sekunden. |
 | OpenAI-kompatibler Provider | `llm_harness/providers/openai_compatible.py` | Streaming gegen `/chat/completions` kompatible APIs. |
 | Mock LLM Provider | `llm_harness/providers/mock.py` | Deterministischer Streaming-Provider fuer Tests ohne LLM-Kosten. |
 | Podman Tool | `llm_harness/tools/podman_shell.py` | Shell-Ausfuehrung in session- oder tag-gebundenen Podman-Containern. |
@@ -76,7 +76,7 @@ API-Plugins koennen beim Start eigene Routen und eigene Tabellen installieren. D
 4. Das `llm-provider-runner` Plugin reagiert auf `llm.run.requested` fuer den passenden Provider.
 5. Der Provider-Runner rekonstruiert den bisherigen Verlauf aus `chat.message.*.created` Events der Session.
 6. Der Provider-Runner schreibt `llm.run.started`, publiziert transiente `llm.delta` Events und schreibt nach Abschluss `chat.message.assistant.created`.
-7. Enthaelt die fertige Provider-Antwort den Fehlercode `server_is_overloaded`, wartet das eigenstaendige `server-overloaded-retry` Plugin zunaechst 30 Sekunden und schreibt dann ein neues `llm.run.requested`. Wiederholte Ueberlastungsantworten verwenden 60, 120, 240 usw. Sekunden. Provider, Modell, Toolsets und Korrelations-ID bleiben erhalten; jeder Versuch bekommt eine neue Run-ID.
+7. Enthaelt die fertige Provider-Antwort den Fehlercode `server_is_overloaded` oder `server_error`, wartet das eigenstaendige `server-overloaded-retry` Plugin zunaechst 30 Sekunden und schreibt dann ein neues `llm.run.requested`. Wiederholte transiente Serverfehler verwenden 60, 120, 240 usw. Sekunden. Provider, Modell, Toolsets und Korrelations-ID bleiben erhalten; jeder Versuch bekommt eine neue Run-ID.
 
 ### Events streamen
 
