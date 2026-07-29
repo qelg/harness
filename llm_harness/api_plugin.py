@@ -13,6 +13,7 @@ from llm_harness.config import Settings
 from llm_harness.core.events import BusEvent, EventBus, EventFilter
 from llm_harness.core.types import (
     MESSAGE_CREATED_NAMES,
+    PARENT_SESSION,
     ModelSelected,
     SessionCreated,
     SessionRenamed,
@@ -114,6 +115,19 @@ class HarnessApiPlugin:
             if tag is None:
                 return sessions
             return [session for session in sessions if tag in session["tags"]]
+
+        @app.get("/sessions/{session_id}/children")
+        async def list_child_sessions(session_id: str) -> list[dict[str, Any]]:
+            _require_session_event(bus, session_id)
+            return [
+                _session_from_events(bus, event)
+                for event in bus.replay(
+                    EventFilter(
+                        names=frozenset({SessionCreated.name}),
+                        tags={PARENT_SESSION: session_id},
+                    )
+                )
+            ]
 
         @app.get("/session-states")
         async def list_session_states() -> list[dict[str, Any]]:
@@ -397,13 +411,17 @@ def _session_from_events(bus: EventBus, event: BusEvent) -> dict[str, Any]:
     )
     if renamed:
         title = renamed[-1].payload["title"]
-    return {
+    session = {
         "id": event.tags["session"],
         "title": title,
         "tags": event.payload.get("tags", []),
         "created_at_ms": event.created_at_ms,
         "event_id": event.id,
     }
+    parent_session_id = event.tags.get(PARENT_SESSION)
+    if parent_session_id is not None:
+        session["parent_session_id"] = parent_session_id
+    return session
 
 
 def _message_from_event(event: BusEvent) -> dict[str, Any]:
