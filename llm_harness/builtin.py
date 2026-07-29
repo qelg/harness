@@ -11,6 +11,7 @@ from llm_harness.builtin_plugins.server_overloaded_retry import ServerOverloaded
 from llm_harness.builtin_plugins.session_state import SessionStatePlugin
 from llm_harness.builtin_plugins.tool_call_requester import ToolCallRequesterPlugin
 from llm_harness.builtin_plugins.tool_result_llm_requester import ToolResultLlmRequesterPlugin
+from llm_harness.builtin_plugins.unifiedpush import UnifiedPushPlugin
 from llm_harness.providers.chatgpt_codex import ChatGPTCodexProvider
 from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
@@ -53,6 +54,9 @@ def register(registry, *, bus=None) -> None:
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
     registry.add_event_consumer_plugin(SessionStatePlugin())
+    unifiedpush = UnifiedPushPlugin()
+    registry.add_api_plugin(unifiedpush)
+    registry.add_event_consumer_plugin(unifiedpush)
     registry.add_event_consumer_plugin(NamerPlugin(settings=settings))
     registry.add_event_consumer_plugin(LlmRunRequesterPlugin(settings=settings))
     registry.add_event_consumer_plugin(LlmProviderRunnerPlugin())
