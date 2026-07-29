@@ -6,7 +6,9 @@ from llm_harness.config import Settings
 from llm_harness.builtin_plugins.model_choice import model_choice_for
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
-from llm_harness.core.types import LlmRunRequested, new_run_id
+from llm_harness.core.types import LlmRunRequested, SessionCreated, new_run_id
+
+NO_AUTO_LLM_RUN_SESSION_TAG = "no-auto-llm-run"
 
 
 class LlmRunRequesterPlugin(EventConsumer):
@@ -18,6 +20,8 @@ class LlmRunRequesterPlugin(EventConsumer):
         self.settings = settings
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
+        if self._auto_run_disabled(bus, event):
+            return
         if await self._already_requested(bus, event):
             return
 
@@ -35,6 +39,19 @@ class LlmRunRequesterPlugin(EventConsumer):
             causation_id=event.id,
             correlation_id=event.correlation_id or event.id,
         )
+
+    def _auto_run_disabled(self, bus: EventBus, event: EventRecord) -> bool:
+        sessions = bus.replay(
+            EventFilter(
+                names=frozenset({SessionCreated.name}),
+                tags={
+                    "session": event.tags["session"],
+                    f"session_tag:{NO_AUTO_LLM_RUN_SESSION_TAG}": "true",
+                },
+            ),
+            limit=1,
+        )
+        return bool(sessions)
 
     async def _already_requested(self, bus: EventBus, event: EventRecord) -> bool:
         requests = bus.replay(
