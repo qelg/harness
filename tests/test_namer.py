@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
-from llm_harness.builtin_plugins.namer import NAMER_SYSTEM_PROMPT, NamerPlugin
+from llm_harness.builtin_plugins.namer import (
+    NAMER_SYSTEM_PROMPT,
+    NAMER_USER_INSTRUCTION,
+    NamerPlugin,
+)
 from llm_harness.config import Settings
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
@@ -36,6 +40,17 @@ def test_state_change_starts_tagged_tool_free_namer_session(tmp_path, monkeypatc
     asyncio.run(bus.append_message(SessionCreated(session_id="sess_parent", title="Old")))
     user = asyncio.run(
         bus.append_message(UserMessageCreated(session_id="sess_parent", content="Fix the parser"))
+    )
+    assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_parent",
+                content="I will inspect the parsing code.",
+                provider="mock-llm",
+                model="chat-model",
+                run_id="run_1",
+            )
+        )
     )
     asyncio.run(
         bus.append_message(
@@ -73,8 +88,16 @@ def test_state_change_starts_tagged_tool_free_namer_session(tmp_path, monkeypatc
     messages = [event for event in child_events if event.name.startswith("chat.message.")]
     assert [(event.tags["role"], event.payload["content"]) for event in messages] == [
         ("system", NAMER_SYSTEM_PROMPT),
-        ("user", "Fix the parser"),
+        (
+            "user",
+            "User: Fix the parser\n\n"
+            "Assistant: I will inspect the parsing code.\n\n"
+            f"{NAMER_USER_INSTRUCTION}",
+        ),
     ]
+    assert messages[1].payload["metadata"] == {
+        "source_event_ids": [user.id, assistant.id]
+    }
     request = next(event for event in child_events if event.name == "llm.run.requested")
     assert request.tags["provider"] == "mock-llm"
     assert request.tags["model"] == "summary-model"

@@ -26,7 +26,7 @@ Dieses Dokument beschreibt den aktuellen Stand der LLM Harness. Die Anwendung is
 | Builtins | `llm_harness/builtin.py` | Registrierung der eingebauten OpenAI-kompatiblen Provider und des Podman-Tools. |
 | LLM Run Requester | `llm_harness/builtin_plugins/llm_run_requester.py` | Erzeugt `llm.run.requested` aus `chat.message.user.created`. |
 | Session State | `llm_harness/builtin_plugins/session_state.py` | Projiziert User-Nachrichten und finale Ergebnisse in `session.state` (`running`/`finished`, bei Abschluss `unread`/`read`). |
-| Namer | `llm_harness/builtin_plugins/namer.py` | Startet bei echten Session-State-Wechseln tool-freie Zusammenfassungs-Sessions und schreibt deren Antwort als `session.renamed` in die Eltern-Session. |
+| Namer | `llm_harness/builtin_plugins/namer.py` | Startet bei echten Session-State-Wechseln tool-freie Zusammenfassungs-Sessions mit dem Verlauf in einer User-Nachricht und schreibt deren Antwort als `session.renamed` in die Eltern-Session. |
 | LLM Provider Runner | `llm_harness/builtin_plugins/llm_provider_runner.py` | Fuehrt `llm.run.requested` gegen registrierte Provider aus und streamt `llm.delta`. |
 | Server Overloaded Retry | `llm_harness/builtin_plugins/server_overloaded_retry.py` | Wiederholt Provider-Antworten mit `metadata.provider_response.error.code=server_is_overloaded` oder `server_error` nach exponentiellem Backoff ab 30 Sekunden. |
 | OpenAI-kompatibler Provider | `llm_harness/providers/openai_compatible.py` | Streaming gegen `/chat/completions` kompatible APIs. |

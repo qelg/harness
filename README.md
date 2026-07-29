@@ -298,13 +298,14 @@ normalen LLM-Requester starten. Sessions mit einem `parent_session`-Tag gelten
 als intern abgeleitet: Sie werden nicht erneut benannt und erscheinen nicht in
 der Top-Level-Liste von `GET /sessions`. Direkte abgeleitete Sessions koennen
 ueber `GET /sessions/{session_id}/children` geladen werden; die Projektionen
-enthalten ihre `parent_session_id`. In die neue Session werden nur System-,
-User- und Assistant-Nachrichten geschrieben;
-Tool-Aufrufe und Tool-Antworten werden nicht kopiert. Der Namer-Run bekommt
-keine Toolsets und fordert als System-Prompt eine ausschliesslich 5-10 Woerter
-lange Zusammenfassung der gesamten kopierten Konversation als Session-Namen
-an. Seine Antwort erzeugt ein `session.renamed` Event in
-der urspruenglichen Session. `GET /sessions` projiziert jeweils den neuesten
+enthalten ihre `parent_session_id`. In die neue Session werden eine
+System-Nachricht und eine User-Nachricht geschrieben. Die User-Nachricht enthaelt den bisherigen sichtbaren Verlauf als
+`User: ...`/`Assistant: ...`-Transkript und endet mit der Aufforderung, daraus
+einen kurzen Titel zu bilden. Tool-Aufrufe und Tool-Antworten werden nicht in
+das Transkript aufgenommen. Der Namer-Run bekommt keine Toolsets und fordert
+eine ausschliesslich 5-10 Woerter lange Zusammenfassung der gesamten
+Konversation als Session-Namen an. Seine Antwort erzeugt ein `session.renamed`
+Event in der urspruenglichen Session. `GET /sessions` projiziert jeweils den neuesten
 Namen.
 
 Provider und Modell lassen sich direkt per Umgebung konfigurieren:
