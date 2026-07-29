@@ -263,11 +263,12 @@ Die fuer eine Uebersicht optimierte API gibt pro Session nur den neuesten Zustan
 curl http://127.0.0.1:8000/session-states
 ```
 
-Die vollstaendige State-Historie einer Session ist ebenfalls verfuegbar. Ein fertiger Zustand kann idempotent als gelesen markiert werden:
+Die vollstaendige State-Historie einer Session ist ebenfalls verfuegbar. Ein fertiger Zustand kann idempotent als gelesen markiert werden. Eine Session wird durch ein neues `session.state` Event mit `archive=true` archiviert. Das naechste regulaere State-Event, beispielsweise nach einer neuen Nachricht, enthaelt dieses Tag nicht mehr und hebt die Archivierung damit automatisch auf:
 
 ```bash
 curl http://127.0.0.1:8000/sessions/sess_123/state-events
 curl -X POST http://127.0.0.1:8000/sessions/sess_123/state/read
+curl -X POST http://127.0.0.1:8000/sessions/sess_123/state/archive
 ```
 
 ## Automatische Session-Namen

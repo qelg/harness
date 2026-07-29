@@ -429,3 +429,61 @@ def test_api_does_not_mark_running_session_read(tmp_path, monkeypatch):
     response = client.post(f"/sessions/{session_id}/state/read")
 
     assert response.status_code == 409
+
+
+def test_api_archives_latest_session_state_until_activity_changes(tmp_path, monkeypatch):
+    from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+    from llm_harness.core.events import EventFilter
+    from llm_harness.core.types import UserMessageCreated
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    plugin = SessionStatePlugin()
+    session_id = client.post("/sessions", json={"title": "archive me"}).json()["id"]
+    first_message = asyncio.run(
+        app.state.bus.append_message(
+            UserMessageCreated(session_id=session_id, content="first")
+        )
+    )
+    asyncio.run(plugin.process_event(app.state.bus, first_message))
+
+    first = client.post(f"/sessions/{session_id}/state/archive")
+    second = client.post(f"/sessions/{session_id}/state/archive")
+
+    assert first.status_code == 200
+    assert first.json()["archive"] == "true"
+    assert first.json()["state"] == "running"
+    assert first.json()["source_event_id"] == first_message.id
+    assert second.json()["event_id"] == first.json()["event_id"]
+    archived_events = app.state.bus.replay(
+        EventFilter(
+            names=frozenset({"session.state"}),
+            tags={"session": session_id, "archive": "true"},
+        )
+    )
+    assert len(archived_events) == 1
+
+    new_message = asyncio.run(
+        app.state.bus.append_message(
+            UserMessageCreated(session_id=session_id, content="new activity")
+        )
+    )
+    asyncio.run(plugin.process_event(app.state.bus, new_message))
+
+    latest = client.get("/session-states").json()[0]
+    assert latest["source_event_id"] == new_message.id
+    assert latest["archive"] is None
+
+
+def test_api_can_archive_session_without_projected_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+    session_id = client.post("/sessions", json={"title": "empty"}).json()["id"]
+
+    response = client.post(f"/sessions/{session_id}/state/archive")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "finished"
+    assert response.json()["read"] == "read"
+    assert response.json()["archive"] == "true"
