@@ -7,12 +7,13 @@ from llm_harness.protocols import ApiPlugin, EventConsumerPlugin, LLMProvider, T
 
 
 class Registry:
-    def __init__(self) -> None:
+    def __init__(self, *, event_consumer_parallelity: dict[str, int] | None = None) -> None:
         self.providers: dict[str, LLMProvider] = {}
         self.tools: dict[str, Tool] = {}
         self.toolsets: dict[str, ToolSet] = {}
         self.api_plugins: list[ApiPlugin] = []
         self.event_consumer_plugins: list[EventConsumerPlugin] = []
+        self.event_consumer_parallelity = event_consumer_parallelity or {}
 
     def add_provider(self, provider: LLMProvider) -> None:
         self.providers[provider.name] = provider
