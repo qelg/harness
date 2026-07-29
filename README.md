@@ -269,3 +269,26 @@ Die vollstaendige State-Historie einer Session ist ebenfalls verfuegbar. Ein fer
 curl http://127.0.0.1:8000/sessions/sess_123/state-events
 curl -X POST http://127.0.0.1:8000/sessions/sess_123/state/read
 ```
+
+## Automatische Session-Namen
+
+Das eingebaute `namer` Event-Consumer-Plugin reagiert auf echte Wechsel nach
+`running` oder `finished` (nicht auf `archived` und nicht auf reine
+`read`-Aenderungen). Fuer jeden Wechsel erzeugt es eine eigene Session mit dem
+Tag `namer` und dem Event-Tag `parent_session=<urspruengliche-session>`. In die
+neue Session werden nur System-, User- und Assistant-Nachrichten geschrieben;
+Tool-Aufrufe und Tool-Antworten werden nicht kopiert. Der Namer-Run bekommt
+keine Toolsets und fordert als System-Prompt eine ausschliesslich 5-10 Woerter
+lange Zusammenfassung an. Seine Antwort erzeugt ein `session.renamed` Event in
+der urspruenglichen Session. `GET /sessions` projiziert jeweils den neuesten
+Namen.
+
+Provider und Modell lassen sich direkt per Umgebung konfigurieren:
+
+```bash
+HARNESS_NAMER_PROVIDER=openrouter
+HARNESS_NAMER_MODEL=openai/gpt-4.1-mini
+```
+
+Im NixOS-Modul entsprechen dem `services.llm-harness.namerProvider` und
+`services.llm-harness.namerModel`.

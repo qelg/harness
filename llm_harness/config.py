@@ -39,6 +39,8 @@ class Settings:
     workers_inline: bool
     default_provider: str
     default_model: str
+    namer_provider: str
+    namer_model: str
     default_toolsets: tuple[str, ...]
     log_provider_events: bool
     skills: tuple[Skill, ...] = ()
@@ -71,6 +73,12 @@ class Settings:
             workers_inline=parse_bool(os.getenv("HARNESS_WORKERS_INLINE", "0")),
             default_provider=os.getenv("HARNESS_DEFAULT_PROVIDER", "mock-llm"),
             default_model=os.getenv("HARNESS_DEFAULT_MODEL", "test-model"),
+            namer_provider=os.getenv(
+                "HARNESS_NAMER_PROVIDER", os.getenv("HARNESS_DEFAULT_PROVIDER", "mock-llm")
+            ),
+            namer_model=os.getenv(
+                "HARNESS_NAMER_MODEL", os.getenv("HARNESS_DEFAULT_MODEL", "test-model")
+            ),
             default_toolsets=parse_csv(os.getenv("HARNESS_DEFAULT_TOOLSETS", "default")),
             log_provider_events=parse_bool(os.getenv("HARNESS_LOG_PROVIDER_EVENTS", "0")),
             skills=parse_skills(os.getenv("HARNESS_SKILLS", "[]")),

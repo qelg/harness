@@ -18,6 +18,10 @@ class LlmRunRequesterPlugin(EventConsumer):
         self.settings = settings
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
+        # The namer copies transcript messages and submits one explicit, tool-free
+        # run after the complete snapshot has been appended.
+        if event.payload.get("metadata", {}).get("namer_copy") is True:
+            return
         if await self._already_requested(bus, event):
             return
 

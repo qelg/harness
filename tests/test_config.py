@@ -74,3 +74,13 @@ def test_settings_reads_prompt_cache_key(monkeypatch):
     monkeypatch.setenv("HARNESS_PROMPT_CACHE_KEY", "shared-harness")
 
     assert Settings.from_env().prompt_cache_key == "shared-harness"
+
+
+def test_settings_reads_namer_model_and_provider(monkeypatch):
+    monkeypatch.setenv("HARNESS_NAMER_PROVIDER", "openrouter")
+    monkeypatch.setenv("HARNESS_NAMER_MODEL", "openai/gpt-4.1-mini")
+
+    settings = Settings.from_env()
+
+    assert settings.namer_provider == "openrouter"
+    assert settings.namer_model == "openai/gpt-4.1-mini"

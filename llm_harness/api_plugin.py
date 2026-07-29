@@ -15,6 +15,7 @@ from llm_harness.core.types import (
     MESSAGE_CREATED_NAMES,
     ModelSelected,
     SessionCreated,
+    SessionRenamed,
     SessionStateChanged,
     ToolCallRequested,
     UserMessageCreated,
@@ -101,11 +102,14 @@ class HarnessApiPlugin:
                 SessionCreated(session_id=session_id, title=request.title, session_tags=tuple(request.tags)),
                 producer="harness-api",
             )
-            return _session_from_events(event)
+            return _session_from_events(bus, event)
 
         @app.get("/sessions")
         async def list_sessions(tag: str | None = None) -> list[dict[str, Any]]:
-            sessions = [_session_from_events(event) for event in bus.replay(EventFilter(names=frozenset({"session.created"})))]
+            sessions = [
+                _session_from_events(bus, event)
+                for event in bus.replay(EventFilter(names=frozenset({SessionCreated.name})))
+            ]
             if tag is None:
                 return sessions
             return [session for session in sessions if tag in session["tags"]]
@@ -331,10 +335,19 @@ def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
     }
 
 
-def _session_from_events(event: BusEvent) -> dict[str, Any]:
+def _session_from_events(bus: EventBus, event: BusEvent) -> dict[str, Any]:
+    title = event.payload.get("title")
+    renamed = bus.replay(
+        EventFilter(
+            names=frozenset({SessionRenamed.name}),
+            tags={"session": event.tags["session"]},
+        )
+    )
+    if renamed:
+        title = renamed[-1].payload["title"]
     return {
         "id": event.tags["session"],
-        "title": event.payload.get("title"),
+        "title": title,
         "tags": event.payload.get("tags", []),
         "created_at_ms": event.created_at_ms,
         "event_id": event.id,

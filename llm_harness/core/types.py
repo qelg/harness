@@ -17,6 +17,8 @@ TOOLSET = "toolset"
 RUN = "run"
 STATE = "state"
 READ = "read"
+NAMER = "namer"
+PARENT_SESSION = "parent_session"
 
 
 class Role(StrEnum):
@@ -87,15 +89,39 @@ class SessionCreated:
     session_id: str
     title: str | None = None
     session_tags: tuple[str, ...] = ()
+    parent_session_id: str | None = None
+    namer: bool = False
 
     name: str = "session.created"
 
     def payload(self) -> dict[str, Any]:
-        return {"title": self.title, "tags": list(self.session_tags)}
+        payload: dict[str, Any] = {"title": self.title, "tags": list(self.session_tags)}
+        if self.parent_session_id is not None:
+            payload["parent_session"] = self.parent_session_id
+        return payload
 
     def tags(self) -> dict[str, str]:
         tags = session_tags(self.session_id, *self.session_tags)
+        if self.namer:
+            tags[NAMER] = "true"
+        if self.parent_session_id is not None:
+            tags[PARENT_SESSION] = self.parent_session_id
         return tags
+
+
+@dataclass(frozen=True)
+class SessionRenamed:
+    session_id: str
+    title: str
+    namer_session_id: str
+
+    name: str = "session.renamed"
+
+    def payload(self) -> dict[str, Any]:
+        return {"title": self.title, "namer_session_id": self.namer_session_id}
+
+    def tags(self) -> dict[str, str]:
+        return {SESSION: self.session_id, CHAT: self.session_id, NAMER: "true"}
 
 
 @dataclass(frozen=True)
@@ -129,6 +155,21 @@ class SessionStateChanged:
         if self.read is not None:
             tags[READ] = self.read
         return tags
+
+
+@dataclass(frozen=True)
+class SystemMessageCreated:
+    session_id: str
+    content: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    name: str = "chat.message.system.created"
+
+    def payload(self) -> dict[str, Any]:
+        return {"content": self.content, "metadata": self.metadata}
+
+    def tags(self) -> dict[str, str]:
+        return {SESSION: self.session_id, CHAT: self.session_id, ROLE: "system"}
 
 
 @dataclass(frozen=True)
@@ -357,7 +398,9 @@ class ToolCallRequested:
 
 REQUIRED_TAGS: dict[str, frozenset[str]] = {
     SessionCreated.name: frozenset({SESSION}),
+    SessionRenamed.name: frozenset({SESSION, NAMER}),
     SessionStateChanged.name: frozenset({SESSION, STATE}),
+    SystemMessageCreated.name: frozenset({SESSION}),
     UserMessageCreated.name: frozenset({SESSION}),
     AssistantMessageCreated.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     ModelSelected.name: frozenset({PROVIDER, MODEL}),
@@ -371,6 +414,7 @@ REQUIRED_TAGS: dict[str, frozenset[str]] = {
 
 MESSAGE_CREATED_NAMES = frozenset(
     {
+        SystemMessageCreated.name,
         UserMessageCreated.name,
         AssistantMessageCreated.name,
         ToolMessageCreated.name,

@@ -69,6 +69,19 @@ in
       description = "Toolsets selected when no session-specific selection event overrides them.";
     };
 
+    namerProvider = lib.mkOption {
+      type = lib.types.nonEmptyStr;
+      default = "mock-llm";
+      description = "Provider used by the built-in session namer plugin.";
+    };
+
+    namerModel = lib.mkOption {
+      type = lib.types.nonEmptyStr;
+      default = "test-model";
+      example = "openai/gpt-4.1-mini";
+      description = "Model used by the built-in session namer plugin.";
+    };
+
     skills = lib.mkOption {
       type = lib.types.listOf lib.types.path;
       default = [ ];
@@ -267,6 +280,8 @@ in
           HARNESS_OPENAI_BASE_URL = cfg.openaiBaseUrl;
           HARNESS_OPENROUTER_BASE_URL = cfg.openrouterBaseUrl;
           HARNESS_DEFAULT_TOOLSETS = lib.concatStringsSep "," cfg.defaultToolsets;
+          HARNESS_NAMER_PROVIDER = cfg.namerProvider;
+          HARNESS_NAMER_MODEL = cfg.namerModel;
           HARNESS_SKILLS = builtins.toJSON (map toString cfg.skills);
           HARNESS_LOG_PROVIDER_EVENTS = if cfg.logProviderEvents then "1" else "0";
           HARNESS_PODMAN_IMAGE = cfg.podmanImage;
