@@ -159,6 +159,56 @@ class HarnessApiPlugin:
             )
             return _session_state_from_event(event)
 
+        @app.post("/sessions/{session_id}/state/archive")
+        async def archive_session_state(session_id: str) -> dict[str, Any]:
+            _require_session_event(bus, session_id)
+            state_events = bus.replay(
+                EventFilter(
+                    names=frozenset({SessionStateChanged.name}),
+                    tags={"session": session_id},
+                )
+            )
+            latest = state_events[-1] if state_events else None
+            if latest is not None and latest.tags.get("archive") == "true":
+                return _session_state_from_event(latest)
+
+            if latest is None:
+                created = bus.replay(
+                    EventFilter(
+                        names=frozenset({SessionCreated.name}),
+                        tags={"session": session_id},
+                    ),
+                    limit=1,
+                )[0]
+                state = "finished"
+                read = "read"
+                source_event_id = created.id
+                outcome = None
+                causation_id = created.id
+                correlation_id = created.correlation_id or created.id
+            else:
+                state = latest.tags["state"]
+                read = latest.tags.get("read")
+                source_event_id = latest.payload["source_event_id"]
+                outcome = latest.payload.get("outcome")
+                causation_id = latest.id
+                correlation_id = latest.correlation_id or latest.id
+
+            event = await bus.append_message(
+                SessionStateChanged(
+                    session_id=session_id,
+                    state=state,
+                    source_event_id=source_event_id,
+                    read=read,
+                    outcome=outcome,
+                    archived=True,
+                ),
+                producer="harness-api",
+                causation_id=causation_id,
+                correlation_id=correlation_id,
+            )
+            return _session_state_from_event(event)
+
         @app.get("/sessions/{session_id}/state-events")
         async def list_session_state_events(session_id: str) -> list[dict[str, Any]]:
             _require_session_event(bus, session_id)
@@ -328,6 +378,7 @@ def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
         "session_id": event.tags["session"],
         "state": event.tags["state"],
         "read": event.tags.get("read"),
+        "archive": event.tags.get("archive"),
         "source_event_id": event.payload["source_event_id"],
         "outcome": event.payload.get("outcome"),
         "event_id": event.id,

@@ -19,6 +19,7 @@ STATE = "state"
 READ = "read"
 NAMER = "namer"
 PARENT_SESSION = "parent_session"
+ARCHIVE = "archive"
 
 
 class Role(StrEnum):
@@ -131,6 +132,7 @@ class SessionStateChanged:
     source_event_id: int
     read: str | None = None
     outcome: str | None = None
+    archived: bool = False
 
     name: str = "session.state"
 
@@ -154,6 +156,8 @@ class SessionStateChanged:
         tags = {SESSION: self.session_id, CHAT: self.session_id, STATE: self.state}
         if self.read is not None:
             tags[READ] = self.read
+        if self.archived:
+            tags[ARCHIVE] = "true"
         return tags
 
 

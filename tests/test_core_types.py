@@ -124,6 +124,14 @@ def test_session_state_event_validates_state_and_read_tags():
         "state": "running",
     }
     assert finished.tags()["read"] == "unread"
+    archived = SessionStateChanged(
+        session_id="sess_1",
+        state="finished",
+        source_event_id=2,
+        read="read",
+        archived=True,
+    )
+    assert archived.tags()["archive"] == "true"
     assert finished.payload()["outcome"] == "stop"
     assert required_tags_for("session.state") == frozenset({"session", "state"})
 
