@@ -144,9 +144,7 @@ def test_namer_ignores_non_changes_archived_and_namer_sessions(tmp_path, monkeyp
         bus.append_message(
             SessionCreated(
                 session_id="sess_child",
-                session_tags=("namer",),
                 parent_session_id="sess_parent",
-                namer=True,
             )
         )
     )
