@@ -245,3 +245,42 @@ def test_openai_compatible_provider_sends_fixed_prompt_cache_key(monkeypatch):
         return [event async for event in provider.stream_response(model="test", messages=[])]
 
     assert asyncio.run(consume_events())[0].delta == "ok"
+
+
+def test_openai_compatible_provider_converts_responses_assistant_output():
+    from llm_harness.providers.openai_compatible import _chat_completion_messages
+
+    responses_output = [
+        {
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": "private provider reasoning"}],
+            "encrypted_content": "provider-specific",
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}],
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "terminal",
+            "arguments": '{"cmd":"pwd"}',
+        },
+    ]
+
+    assert _chat_completion_messages(
+        [Message(id=1, session_id="sess_1", role=Role.ASSISTANT, content=responses_output)]
+    ) == [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "hello"}],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "terminal", "arguments": '{"cmd":"pwd"}'},
+                }
+            ],
+        }
+    ]

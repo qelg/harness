@@ -129,9 +129,55 @@ def _chat_completion_messages(messages: Sequence[Message]) -> list[dict]:
 def _stored_chat_completion_messages(content: object) -> list[dict] | None:
     if not isinstance(content, list) or not content:
         return None
-    if not all(isinstance(item, dict) and item.get("role") == "assistant" for item in content):
+    if all(isinstance(item, dict) and item.get("role") == "assistant" for item in content):
+        return [dict(item) for item in content]
+    if any(
+        isinstance(item, dict) and item.get("type") in {"message", "function_call", "reasoning"}
+        for item in content
+    ):
+        converted = _responses_output_as_chat_completion_message(content)
+        return [converted] if converted is not None else []
+    return None
+
+
+def _responses_output_as_chat_completion_message(output: list[object]) -> dict | None:
+    message: dict = {"role": "assistant", "content": []}
+    tool_calls: list[dict] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "message":
+            content = item.get("content")
+            if isinstance(content, list):
+                message["content"].extend(_responses_content_part_as_chat(part) for part in content)
+            elif content is not None:
+                message["content"].append(content)
+        elif item.get("type") == "function_call":
+            tool_calls.append(
+                {
+                    "id": item.get("call_id") or item.get("id"),
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name"),
+                        "arguments": item.get("arguments", ""),
+                    },
+                }
+            )
+    if not message["content"] and not tool_calls:
         return None
-    return [dict(item) for item in content]
+    if not message["content"]:
+        message["content"] = None
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return message
+
+
+def _responses_content_part_as_chat(part: object) -> object:
+    if not isinstance(part, dict) or part.get("type") != "output_text":
+        return part
+    converted = dict(part)
+    converted["type"] = "text"
+    return converted
 
 
 def _openai_tool(tool: ToolSpec) -> dict:

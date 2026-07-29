@@ -152,6 +152,10 @@ def _tool_message_input(message: Message) -> dict:
 
 
 def _responses_input_from_output(message: Message) -> list[dict]:
+    chat_completion_items = _chat_completion_output_as_responses_input(message)
+    if chat_completion_items is not None:
+        return chat_completion_items
+
     items: list[dict] = []
     for item in message.content:
         if not isinstance(item, dict):
@@ -167,6 +171,55 @@ def _responses_input_from_output(message: Message) -> list[dict]:
         else:
             items.append(dict(item))
     return items
+
+
+def _chat_completion_output_as_responses_input(message: Message) -> list[dict] | None:
+    if not message.content or not all(
+        isinstance(item, dict) and item.get("role") == "assistant"
+        for item in message.content
+    ):
+        return None
+
+    items: list[dict] = []
+    for stored_message in message.content:
+        content = stored_message.get("content")
+        if content is not None:
+            items.append(
+                {
+                    "role": "assistant",
+                    "content": _chat_content_as_responses_content(content),
+                }
+            )
+        for index, call in enumerate(stored_message.get("tool_calls") or []):
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") or {}
+            arguments = function.get("arguments", "")
+            if not isinstance(arguments, str):
+                arguments = json.dumps(arguments, separators=(",", ":"))
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": call.get("id") or f"call_{message.id}_{index}",
+                    "name": function.get("name"),
+                    "arguments": arguments,
+                }
+            )
+    return items
+
+
+def _chat_content_as_responses_content(content: object) -> object:
+    if not isinstance(content, list):
+        return content
+    converted: list[object] = []
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "text":
+            converted.append(part)
+            continue
+        output_part = dict(part)
+        output_part["type"] = "output_text"
+        converted.append(output_part)
+    return converted
 
 
 class _ResponsesAccumulator:

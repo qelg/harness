@@ -462,3 +462,40 @@ def test_chatgpt_codex_provider_includes_error_response_body(tmp_path, monkeypat
 
     with pytest.raises(RuntimeError, match="missing instructions"):
         asyncio.run(consume())
+
+
+def test_chatgpt_codex_provider_converts_chat_completion_assistant_output():
+    from llm_harness.providers.chatgpt_codex import _responses_input
+
+    chat_completion_output = [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "hello"}],
+            "reasoning": "provider-specific reasoning",
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "provider-specific reasoning", "index": 0}
+            ],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "terminal", "arguments": '{"cmd":"pwd"}'},
+                }
+            ],
+        }
+    ]
+
+    assert _responses_input(
+        [Message(id=1, session_id="sess_1", role=Role.ASSISTANT, content=chat_completion_output)]
+    ) == [
+        {
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "hello"}],
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "terminal",
+            "arguments": '{"cmd":"pwd"}',
+        },
+    ]
