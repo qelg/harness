@@ -302,7 +302,8 @@ enthalten ihre `parent_session_id`. In die neue Session werden nur System-,
 User- und Assistant-Nachrichten geschrieben;
 Tool-Aufrufe und Tool-Antworten werden nicht kopiert. Der Namer-Run bekommt
 keine Toolsets und fordert als System-Prompt eine ausschliesslich 5-10 Woerter
-lange Zusammenfassung an. Seine Antwort erzeugt ein `session.renamed` Event in
+lange Zusammenfassung der gesamten kopierten Konversation als Session-Namen
+an. Seine Antwort erzeugt ein `session.renamed` Event in
 der urspruenglichen Session. `GET /sessions` projiziert jeweils den neuesten
 Namen.
 

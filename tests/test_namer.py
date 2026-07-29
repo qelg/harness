@@ -22,6 +22,14 @@ def _settings(tmp_path, monkeypatch) -> Settings:
     return Settings.from_env()
 
 
+def test_namer_prompt_requests_a_title_for_the_entire_conversation():
+    assert NAMER_SYSTEM_PROMPT == (
+        "Summarize the entire conversation, considering all user and assistant messages, "
+        "in 5-10 words. Use the summary as the conversation title. "
+        "Reply solely with the title. Do not use tools."
+    )
+
+
 def test_state_change_starts_tagged_tool_free_namer_session(tmp_path, monkeypatch):
     settings = _settings(tmp_path, monkeypatch)
     bus = EventService(settings.event_database_path)
