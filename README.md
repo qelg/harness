@@ -315,3 +315,33 @@ HARNESS_NAMER_MODEL=openai/gpt-4.1-mini
 
 Im NixOS-Modul entsprechen dem `services.llm-harness.namerProvider` und
 `services.llm-harness.namerModel`.
+
+## UnifiedPush notifications
+
+The built-in `unifiedpush` event-consumer sends a notification when a top-level
+session changes to `finished`. Derived sessions (sessions with a
+`parent_session`) and subsequent read/archive state events do not trigger a
+notification. The JSON sent to the distributor endpoint contains the session
+id, current session title, and final assistant message. Delivery is recorded per
+event and subscription so retrying the persistent consumer does not duplicate a
+successful push; endpoints returning 404 or 410 are removed.
+
+Android clients register the capability URL supplied by their UnifiedPush
+distributor with:
+
+```http
+PUT /push/unifiedpush/subscriptions
+content-type: application/json
+
+{"instance_id":"stable-device-id","endpoint":"https://push.example/secret"}
+```
+
+They unregister it with
+`DELETE /push/unifiedpush/subscriptions/{instance_id}`. Only public HTTPS
+endpoints are accepted. These routes should be protected by the same access
+control as the rest of the Harness API because a UnifiedPush endpoint is a
+secret capability URL.
+
+No Google Play service, FCM project, API key, or server-side UnifiedPush service
+is required. The Harness host only needs outbound HTTPS access to the endpoint
+provided by the phone's distributor.
