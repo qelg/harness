@@ -25,6 +25,10 @@ NAMER_SYSTEM_PROMPT = (
     "in 5-10 words. Use the summary as the conversation title. "
     "Reply solely with the title. Do not use tools."
 )
+NAMER_USER_INSTRUCTION = (
+    "Summarize the conversation above in 5-10 words and use the summary as its title. "
+    "Reply solely with the title."
+)
 
 
 class NamerPlugin(EventConsumer):
@@ -61,13 +65,8 @@ class NamerPlugin(EventConsumer):
             return
 
         namer_session_id = new_session_id()
-        messages: list[Any] = [
-            SystemMessageCreated(
-                session_id=namer_session_id,
-                content=NAMER_SYSTEM_PROMPT,
-                metadata={"namer": True},
-            )
-        ]
+        transcript: list[str] = []
+        source_event_ids: list[int] = []
         for source in bus.replay(
             EventFilter(
                 names=frozenset(
@@ -78,30 +77,37 @@ class NamerPlugin(EventConsumer):
         ):
             if source.id >= event.id:
                 continue
-            if source.name == AssistantMessageCreated.name and _contains_tool_call(
-                source.payload.get("content")
+            content = source.payload.get("content")
+            if (
+                source.name == AssistantMessageCreated.name
+                and _contains_tool_call(content)
             ):
                 continue
-            metadata = {"source_event_id": source.id}
-            if source.name == UserMessageCreated.name:
-                messages.append(
-                    UserMessageCreated(
-                        session_id=namer_session_id,
-                        content=source.payload["content"],
-                        metadata=metadata,
-                    )
-                )
-            else:
-                messages.append(
-                    AssistantMessageCreated(
-                        session_id=namer_session_id,
-                        content=source.payload["content"],
-                        provider=source.payload.get("provider", source.tags.get("provider", "unknown")),
-                        model=source.payload.get("model", source.tags.get("model", "unknown")),
-                        run_id=source.payload.get("run_id", source.tags.get("run", new_run_id("copy"))),
-                        metadata=metadata,
-                    )
-                )
+            text = _text_content(content).strip()
+            if not text:
+                continue
+            role = "User" if source.name == UserMessageCreated.name else "Assistant"
+            transcript.append(f"{role}: {text}")
+            source_event_ids.append(source.id)
+
+        conversation = "\n\n".join(transcript)
+        user_prompt = (
+            f"{conversation}\n\n{NAMER_USER_INSTRUCTION}"
+            if conversation
+            else NAMER_USER_INSTRUCTION
+        )
+        messages: list[Any] = [
+            SystemMessageCreated(
+                session_id=namer_session_id,
+                content=NAMER_SYSTEM_PROMPT,
+                metadata={"namer": True},
+            ),
+            UserMessageCreated(
+                session_id=namer_session_id,
+                content=user_prompt,
+                metadata={"source_event_ids": source_event_ids},
+            ),
+        ]
 
         created = SessionCreated(
             session_id=namer_session_id,
