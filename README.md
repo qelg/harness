@@ -272,6 +272,8 @@ Das eingebaute `session-state` Event-Consumer-Plugin projiziert Chat-Aktivitaet 
 
 Jedes State-Event traegt `session` und `chat` Tags. `source_event_id` im Payload sowie `causation_id` referenzieren die Nachricht bzw. den fehlgeschlagenen Run, der den Zustand ausgeloest hat. Bei einem fertigen Provider-Ergebnis beschreibt `outcome` den Abschlussgrund, zum Beispiel `stop`, `completed` oder `failed`.
 
+Live-Clients erhalten diese `session.state` Events ebenfalls ueber den wiederaufnehmbaren `/sessions/{session_id}/messages/updates` SSE-Stream. Damit kann derselbe Stream sowohl die Nachrichten-Timeline als auch den laufenden bzw. fertigen Zustand einer Session synchron halten.
+
 Die fuer eine Uebersicht optimierte API gibt pro Session nur den neuesten Zustand zurueck, absteigend nach letzter Aktivitaet:
 
 ```bash

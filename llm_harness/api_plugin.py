@@ -26,7 +26,7 @@ from llm_harness.core.types import (
 from llm_harness.plugins import Registry
 
 MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset({"llm.run.failed", ToolCallRequested.name})
-MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta"})
+MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta", SessionStateChanged.name})
 
 
 class CreateSessionRequest(BaseModel):
