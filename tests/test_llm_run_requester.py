@@ -78,3 +78,32 @@ def test_llm_run_requester_does_not_duplicate_requests(tmp_path, monkeypatch):
 
     requests = bus.replay(EventFilter(names=frozenset({"llm.run.requested"}), tags={"session": "sess_1"}))
     assert len(requests) == 1
+
+
+def test_session_tag_can_disable_automatic_llm_runs(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    plugin = LlmRunRequesterPlugin(settings=Settings.from_env())
+    asyncio.run(
+        bus.append_message(
+            SessionCreated(
+                session_id="sess_manual",
+                session_tags=("no-auto-llm-run",),
+            )
+        )
+    )
+    asyncio.run(
+        bus.append_message(
+            UserMessageCreated(session_id="sess_manual", content="hello")
+        )
+    )
+
+    asyncio.run(plugin.process_pending(bus))
+
+    requests = bus.replay(
+        EventFilter(
+            names=frozenset({"llm.run.requested"}),
+            tags={"session": "sess_manual"},
+        )
+    )
+    assert requests == []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from llm_harness.builtin_plugins.llm_run_requester import NO_AUTO_LLM_RUN_SESSION_TAG
 from llm_harness.config import Settings
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord, EventToAppend
@@ -75,7 +76,7 @@ class NamerPlugin(EventConsumer):
                 source.payload.get("content")
             ):
                 continue
-            metadata = {"namer_copy": True, "source_event_id": source.id}
+            metadata = {"source_event_id": source.id}
             if source.name == UserMessageCreated.name:
                 messages.append(
                     UserMessageCreated(
@@ -98,7 +99,7 @@ class NamerPlugin(EventConsumer):
 
         created = SessionCreated(
             session_id=namer_session_id,
-            session_tags=(NAMER_SESSION_TAG,),
+            session_tags=(NAMER_SESSION_TAG, NO_AUTO_LLM_RUN_SESSION_TAG),
             parent_session_id=parent_session_id,
             namer=True,
         )
@@ -131,7 +132,9 @@ class NamerPlugin(EventConsumer):
         )
 
     async def _rename_parent(self, bus: EventBus, event: EventRecord) -> None:
-        if event.payload.get("metadata", {}).get("namer_copy") is True:
+        # Copied assistant messages are authored by this plugin; only the
+        # provider runner's new assistant reply should rename the parent.
+        if event.producer == self.name:
             return
         namer_session = _session_created(bus, event.tags["session"])
         if namer_session is None or namer_session.tags.get("namer") != "true":

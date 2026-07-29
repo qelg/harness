@@ -57,6 +57,7 @@ def test_state_change_starts_tagged_tool_free_namer_session(tmp_path, monkeypatc
     assert len(children) == 1
     child = children[0]
     assert child.tags["session_tag:namer"] == "true"
+    assert child.tags["session_tag:no-auto-llm-run"] == "true"
     assert child.tags["parent_session"] == "sess_parent"
     assert child.payload["parent_session"] == "sess_parent"
 
