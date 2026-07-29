@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -47,6 +47,7 @@ class SelectModelRequest(BaseModel):
     model: str
     toolsets: list[str] | None = None
     session_id: str | None = None
+    thinking_level: Literal["none", "low", "medium", "max"] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -84,6 +85,7 @@ class HarnessApiPlugin:
                     provider=request.provider,
                     model=request.model,
                     toolsets=tuple(toolsets),
+                    thinking_level=request.thinking_level,
                     session_id=request.session_id,
                     metadata=request.metadata,
                 ),
@@ -500,6 +502,7 @@ def _model_selection_for(bus: EventBus, session_id: str, *, settings: Settings) 
         "provider": settings.default_provider,
         "model": settings.default_model,
         "toolsets": list(settings.default_toolsets),
+        "thinking_level": None,
         "scope": "default",
         "session_id": session_id,
         "event_id": None,
@@ -512,6 +515,7 @@ def _model_selection_from_event(event: BusEvent, *, scope: str) -> dict[str, Any
         "provider": event.tags["provider"],
         "model": event.tags["model"],
         "toolsets": event.payload.get("toolsets", []),
+        "thinking_level": event.payload.get("thinking_level"),
         "scope": scope,
         "session_id": event.tags.get("session"),
         "event_id": event.id,

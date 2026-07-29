@@ -79,6 +79,7 @@ class ServerOverloadedRetryPlugin(EventConsumer):
                 model=event.tags["model"],
                 run_id=new_run_id("llm"),
                 toolsets=tuple(toolsets),
+                thinking_level=request_payload.get("thinking_level"),
                 user_message_event_id=user_message_event_id,
                 metadata=metadata,
             ),

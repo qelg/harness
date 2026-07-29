@@ -52,6 +52,15 @@ Optional koennen neue Events fuer eine Session gestreamt werden:
 curl -N http://127.0.0.1:8000/sessions/1/events/stream
 ```
 
+Modell und Thinking-Level koennen pro Session gewaehlt werden. Erlaubte Thinking-Level sind
+`none`, `low`, `medium` und `max`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/model-selection \
+  -H 'content-type: application/json' \
+  -d '{"provider":"openrouter","model":"openai/gpt-5","thinking_level":"medium","session_id":"sess_1"}'
+```
+
 ```bash
 curl -X POST http://127.0.0.1:8000/sessions/1/tools/terminal \
   -H 'content-type: application/json' \

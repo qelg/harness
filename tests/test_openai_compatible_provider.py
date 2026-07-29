@@ -46,6 +46,7 @@ def test_openai_compatible_provider_accumulates_reasoning_tool_calls_and_usage(m
         payload = json.loads(request.content)
         assert payload["stream_options"] == {"include_usage": True}
         assert "prompt_cache_key" not in payload
+        assert payload["reasoning"] == {"effort": "low"}
         return httpx.Response(
             200,
             content=(
@@ -77,7 +78,12 @@ def test_openai_compatible_provider_accumulates_reasoning_tool_calls_and_usage(m
     )
 
     async def consume_events() -> list:
-        return [event async for event in provider.stream_response(model="test", messages=[])]
+        return [
+            event
+            async for event in provider.stream_response(
+                model="test", messages=[], thinking_level="low"
+            )
+        ]
 
     events = asyncio.run(consume_events())
 

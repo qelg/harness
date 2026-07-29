@@ -33,6 +33,7 @@ class LlmProviderRunnerPlugin(EventConsumer):
         session_id = event.tags["session"]
         provider = None if registry is None else registry.providers.get(provider_name)
         toolsets = tuple(event.payload.get("toolsets", ()))
+        thinking_level = event.payload.get("thinking_level")
 
         if provider is None:
             await self._fail(
@@ -74,7 +75,9 @@ class LlmProviderRunnerPlugin(EventConsumer):
         try:
             messages = self._messages_for_session(bus, session_id=session_id, before_event_id=event.id)
             sequence = 0
-            async for stream_event in _stream_provider_response(provider, model=model, messages=messages, tools=tools):
+            async for stream_event in _stream_provider_response(
+                provider, model=model, messages=messages, tools=tools, thinking_level=thinking_level
+            ):
                 if stream_event.type == "completed":
                     provider_response = stream_event.response
                     continue
@@ -197,12 +200,22 @@ def _assistant_content(content_parts: list[str], provider_response: dict[str, An
     return "".join(content_parts)
 
 
-async def _stream_provider_response(provider: Any, *, model: str, messages: list[Message], tools: list[ToolSpec]):
+async def _stream_provider_response(
+    provider: Any,
+    *,
+    model: str,
+    messages: list[Message],
+    tools: list[ToolSpec],
+    thinking_level: str | None,
+):
+    kwargs = {"model": model, "messages": messages, "tools": tools}
+    if thinking_level is not None:
+        kwargs["thinking_level"] = thinking_level
     if hasattr(provider, "stream_response"):
-        async for event in provider.stream_response(model=model, messages=messages, tools=tools):
+        async for event in provider.stream_response(**kwargs):
             yield event
         return
-    async for delta in provider.stream_chat(model=model, messages=messages, tools=tools):
+    async for delta in provider.stream_chat(**kwargs):
         yield ProviderStreamEvent(type="delta", delta=delta)
     yield ProviderStreamEvent(type="completed", response=None)
 

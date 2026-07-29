@@ -35,8 +35,11 @@ class OpenAICompatibleProvider:
         model: str,
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
+        thinking_level: str | None = None,
     ) -> AsyncIterator[str]:
-        async for event in self.stream_response(model=model, messages=messages, tools=tools):
+        async for event in self.stream_response(
+            model=model, messages=messages, tools=tools, thinking_level=thinking_level
+        ):
             if event.type == "delta" and event.delta:
                 yield event.delta
 
@@ -46,6 +49,7 @@ class OpenAICompatibleProvider:
         model: str,
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
+        thinking_level: str | None = None,
     ) -> AsyncIterator[ProviderStreamEvent]:
         if not self.api_key:
             raise RuntimeError(f"missing API key for provider {self.name}")
@@ -56,6 +60,12 @@ class OpenAICompatibleProvider:
             "stream_options": {"include_usage": True},
             "messages": _chat_completion_messages(messages),
         }
+        if thinking_level is not None:
+            effort = "high" if thinking_level == "max" else thinking_level
+            if self.name == "openrouter":
+                payload["reasoning"] = {"effort": effort}
+            else:
+                payload["reasoning_effort"] = effort
         if self.prompt_cache_key is not None:
             payload["prompt_cache_key"] = self.prompt_cache_key
         if tools:

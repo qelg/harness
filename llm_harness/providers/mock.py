@@ -17,6 +17,7 @@ class MockLLMProvider:
         model: str,
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
+        thinking_level: str | None = None,
     ) -> AsyncIterator[str]:
         for chunk in _chunks(self.response):
             yield chunk
