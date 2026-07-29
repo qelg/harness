@@ -20,7 +20,11 @@ from llm_harness.core.types import (
 )
 
 NAMER_SESSION_TAG = "namer"
-NAMER_SYSTEM_PROMPT = "Reply solely with a 5-10 word summary. Do not use tools."
+NAMER_SYSTEM_PROMPT = (
+    "Summarize the entire conversation, considering all user and assistant messages, "
+    "in 5-10 words. Use the summary as the conversation title. "
+    "Reply solely with the title. Do not use tools."
+)
 
 
 class NamerPlugin(EventConsumer):
