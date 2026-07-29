@@ -33,6 +33,7 @@ class LlmRunRequesterPlugin(EventConsumer):
                 model=choice.model,
                 run_id=new_run_id("llm"),
                 toolsets=choice.toolsets,
+                thinking_level=choice.thinking_level,
                 user_message_event_id=event.id,
             ),
             producer=self.name,

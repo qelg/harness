@@ -12,6 +12,7 @@ class ModelChoice:
     provider: str
     model: str
     toolsets: tuple[str, ...]
+    thinking_level: str | None = None
 
 
 def model_choice_for(bus: EventBus, session_id: str | None, settings: Settings) -> ModelChoice:
@@ -24,6 +25,7 @@ def model_choice_for(bus: EventBus, session_id: str | None, settings: Settings) 
             provider=event.tags["provider"],
             model=event.tags["model"],
             toolsets=tuple(event.payload.get("toolsets", settings.default_toolsets)),
+            thinking_level=event.payload.get("thinking_level"),
         )
         if session_id is not None and event.tags.get("session") == session_id:
             session_choice = choice

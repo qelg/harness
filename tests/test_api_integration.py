@@ -272,7 +272,12 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
     session_id = client.post("/sessions", json={"title": "model-test"}).json()["id"]
     response = client.post(
         "/model-selection",
-        json={"provider": "openrouter", "model": "anthropic/claude", "session_id": session_id},
+        json={
+            "provider": "openrouter",
+            "model": "anthropic/claude",
+            "session_id": session_id,
+            "thinking_level": "medium",
+        },
     )
 
     assert response.status_code == 200
@@ -282,6 +287,20 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
     assert event["tags"]["provider"] == "openrouter"
     assert event["tags"]["model"] == "anthropic/claude"
     assert event["payload"]["toolsets"] == ["default"]
+    assert event["payload"]["thinking_level"] == "medium"
+    assert client.get(f"/sessions/{session_id}/model-selection").json()["thinking_level"] == "medium"
+
+
+def test_api_rejects_unknown_thinking_level(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/model-selection",
+        json={"provider": "mock-llm", "model": "test-model", "thinking_level": "extreme"},
+    )
+
+    assert response.status_code == 422
 
 
 def test_api_returns_effective_model_selection(tmp_path, monkeypatch):

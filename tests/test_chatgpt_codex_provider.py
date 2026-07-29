@@ -71,6 +71,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
             }
         ]
         assert payload["store"] is False
+        assert payload["reasoning"] == {"effort": "high"}
         assert payload["prompt_cache_key"] == "shared-harness"
         return httpx.Response(
             200,
@@ -94,7 +95,12 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
     async def consume() -> list[str]:
         message = Message(id=1, session_id="sess_1", role=Role.USER, content="hello")
         tool = ToolSpec(name="echo", description="Echo text.", input_schema={"type": "object"})
-        return [delta async for delta in provider.stream_chat(model="codex", messages=[message], tools=[tool])]
+        return [
+            delta
+            async for delta in provider.stream_chat(
+                model="codex", messages=[message], tools=[tool], thinking_level="high"
+            )
+        ]
 
     with caplog.at_level(logging.INFO, logger="llm_harness.providers.chatgpt_codex"):
         assert asyncio.run(consume()) == ["hi"]
@@ -104,7 +110,12 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
     async def consume_events() -> list:
         message = Message(id=1, session_id="sess_1", role=Role.USER, content="hello")
         tool = ToolSpec(name="echo", description="Echo text.", input_schema={"type": "object"})
-        return [event async for event in provider.stream_response(model="codex", messages=[message], tools=[tool])]
+        return [
+            event
+            async for event in provider.stream_response(
+                model="codex", messages=[message], tools=[tool], thinking_level="high"
+            )
+        ]
 
     events = asyncio.run(consume_events())
     assert events[-1].type == "completed"

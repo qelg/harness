@@ -21,6 +21,7 @@ class LLMProvider(Protocol):
         model: str,
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
+        thinking_level: str | None = None,
     ) -> AsyncIterator[str]:
         """Yield assistant text deltas."""
 
@@ -30,6 +31,7 @@ class LLMProvider(Protocol):
         model: str,
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
+        thinking_level: str | None = None,
     ) -> AsyncIterator[ProviderStreamEvent]:
         """Yield structured provider stream events, including the final full response when available."""
 
