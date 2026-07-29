@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator, Sequence
 
 import httpx
 
-from llm_harness.core.types import Message, ProviderStreamEvent, ToolSpec
+from llm_harness.core.types import Message, ProviderStreamEvent, Role, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class OpenAICompatibleProvider:
             "model": model,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "messages": [{"role": message.role.value, "content": message.content} for message in messages],
+            "messages": _chat_completion_messages(messages),
         }
         if self.prompt_cache_key is not None:
             payload["prompt_cache_key"] = self.prompt_cache_key
@@ -104,6 +104,34 @@ class OpenAICompatibleProvider:
                     type="completed",
                     response=accumulator.response(include_chunks=self.log_provider_events),
                 )
+
+
+def _chat_completion_messages(messages: Sequence[Message]) -> list[dict]:
+    serialized: list[dict] = []
+    for message in messages:
+        if message.role == Role.ASSISTANT:
+            assistant_messages = _stored_chat_completion_messages(message.content)
+            if assistant_messages is not None:
+                serialized.extend(assistant_messages)
+                continue
+
+        serialized_message = {"role": message.role.value, "content": message.content}
+        if message.role == Role.TOOL:
+            serialized_message["tool_call_id"] = (
+                message.metadata.get("call_id")
+                or message.metadata.get("run_id")
+                or str(message.id)
+            )
+        serialized.append(serialized_message)
+    return serialized
+
+
+def _stored_chat_completion_messages(content: object) -> list[dict] | None:
+    if not isinstance(content, list) or not content:
+        return None
+    if not all(isinstance(item, dict) and item.get("role") == "assistant" for item in content):
+        return None
+    return [dict(item) for item in content]
 
 
 def _openai_tool(tool: ToolSpec) -> dict:

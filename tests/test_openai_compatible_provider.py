@@ -96,12 +96,31 @@ def test_openai_compatible_provider_accumulates_reasoning_tool_calls_and_usage(m
     assert "stream_chunks" not in completed
 
 
-def test_openai_compatible_provider_sends_json_message_content(monkeypatch):
-    assistant_output = [{"type": "function_call", "name": "echo"}]
+def test_openai_compatible_provider_restores_structured_assistant_message(monkeypatch):
+    assistant_output = [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "hello"}],
+            "reasoning": "plan",
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "plan", "index": 0}
+            ],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "terminal", "arguments": '{"cmd":"pwd"}'},
+                }
+            ],
+        }
+    ]
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
-        assert payload["messages"] == [{"role": "assistant", "content": assistant_output}]
+        assert payload["messages"] == [
+            *assistant_output,
+            {"role": "tool", "content": "done", "tool_call_id": "call_1"},
+        ]
         return httpx.Response(
             200,
             content=b'data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
@@ -122,7 +141,48 @@ def test_openai_compatible_provider_sends_json_message_content(monkeypatch):
     )
 
     async def consume_events() -> list:
-        message = Message(id=1, session_id="sess_1", role=Role.ASSISTANT, content=assistant_output)
+        messages = [
+            Message(id=1, session_id="sess_1", role=Role.ASSISTANT, content=assistant_output),
+            Message(
+                id=2,
+                session_id="sess_1",
+                role=Role.TOOL,
+                content="done",
+                metadata={"run_id": "call_1"},
+            ),
+        ]
+        return [event async for event in provider.stream_response(model="test", messages=messages)]
+
+    assert asyncio.run(consume_events())[0].delta == "ok"
+
+
+def test_openai_compatible_provider_keeps_json_content_parts_nested(monkeypatch):
+    content = [{"type": "text", "text": "hello"}]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["messages"] == [{"role": "assistant", "content": content}]
+        return httpx.Response(
+            200,
+            content=b'data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    original_client = httpx.AsyncClient
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(*args, **kwargs):
+        return original_client(transport=transport, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr("llm_harness.providers.openai_compatible.httpx.AsyncClient", client_factory)
+    provider = OpenAICompatibleProvider(
+        name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="test-key",
+    )
+
+    async def consume_events() -> list:
+        message = Message(id=1, session_id="sess_1", role=Role.ASSISTANT, content=content)
         return [event async for event in provider.stream_response(model="test", messages=[message])]
 
     assert asyncio.run(consume_events())[0].delta == "ok"
