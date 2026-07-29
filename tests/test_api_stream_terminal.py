@@ -1,4 +1,4 @@
-from llm_harness.api_plugin import _is_terminal_stream_event
+from llm_harness.api_plugin import MESSAGE_UPDATE_NAMES, _is_terminal_stream_event
 from llm_harness.core.events import EventRecord
 
 
@@ -16,3 +16,7 @@ def test_text_assistant_is_terminal():
 
 def test_failure_is_terminal():
     assert _is_terminal_stream_event(event("llm.run.failed", None))
+
+
+def test_message_update_stream_includes_session_states():
+    assert "session.state" in MESSAGE_UPDATE_NAMES
