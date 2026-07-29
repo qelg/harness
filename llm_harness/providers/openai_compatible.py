@@ -61,7 +61,7 @@ class OpenAICompatibleProvider:
             "messages": _chat_completion_messages(messages),
         }
         if thinking_level is not None:
-            effort = "high" if thinking_level == "max" else thinking_level
+            effort = thinking_level
             if self.name == "openrouter":
                 payload["reasoning"] = {"effort": effort}
             else:

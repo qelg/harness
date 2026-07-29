@@ -47,7 +47,7 @@ class SelectModelRequest(BaseModel):
     model: str
     toolsets: list[str] | None = None
     session_id: str | None = None
-    thinking_level: Literal["none", "low", "medium", "max"] | None = None
+    thinking_level: Literal["none", "low", "medium", "high"] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -53,7 +53,7 @@ curl -N http://127.0.0.1:8000/sessions/1/events/stream
 ```
 
 Modell und Thinking-Level koennen pro Session gewaehlt werden. Erlaubte Thinking-Level sind
-`none`, `low`, `medium` und `max`:
+`none`, `low`, `medium` und `high`:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/model-selection \

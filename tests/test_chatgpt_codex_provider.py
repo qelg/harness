@@ -98,7 +98,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
         return [
             delta
             async for delta in provider.stream_chat(
-                model="codex", messages=[message], tools=[tool], thinking_level="max"
+                model="codex", messages=[message], tools=[tool], thinking_level="high"
             )
         ]
 
@@ -113,7 +113,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
         return [
             event
             async for event in provider.stream_response(
-                model="codex", messages=[message], tools=[tool], thinking_level="max"
+                model="codex", messages=[message], tools=[tool], thinking_level="high"
             )
         ]
 

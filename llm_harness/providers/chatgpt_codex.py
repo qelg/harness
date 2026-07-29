@@ -55,7 +55,7 @@ class ChatGPTCodexProvider:
         }
         if thinking_level is not None:
             payload["reasoning"] = {
-                "effort": "high" if thinking_level == "max" else thinking_level
+                "effort": thinking_level
             }
         if self.settings.prompt_cache_key is not None:
             payload["prompt_cache_key"] = self.settings.prompt_cache_key
