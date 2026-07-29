@@ -50,6 +50,48 @@ def test_api_hides_derived_sessions_from_top_level_list(tmp_path, monkeypatch):
     assert response.json() == [parent]
 
 
+def test_api_lists_direct_child_sessions(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    parent = client.post("/sessions", json={"title": "parent"}).json()
+    for session in (
+        SessionCreated(
+            session_id="sess_child_1",
+            title="first child",
+            parent_session_id=parent["id"],
+        ),
+        SessionCreated(
+            session_id="sess_child_2",
+            title="second child",
+            parent_session_id=parent["id"],
+        ),
+        SessionCreated(
+            session_id="sess_grandchild",
+            title="grandchild",
+            parent_session_id="sess_child_1",
+        ),
+        SessionCreated(
+            session_id="sess_unrelated",
+            title="unrelated",
+            parent_session_id="sess_other",
+        ),
+    ):
+        asyncio.run(app.state.bus.append_message(session, producer="test-plugin"))
+
+    response = client.get(f"/sessions/{parent['id']}/children")
+
+    assert response.status_code == 200
+    assert [session["id"] for session in response.json()] == [
+        "sess_child_1",
+        "sess_child_2",
+    ]
+    assert {
+        session["parent_session_id"] for session in response.json()
+    } == {parent["id"]}
+    assert client.get("/sessions/missing/children").status_code == 404
+
+
 def test_api_serves_frontend(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     client = TestClient(create_app())
