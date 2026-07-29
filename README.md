@@ -78,6 +78,21 @@ def register(registry):
 
 Siehe `llm_harness/protocols.py` fuer die minimalen Interfaces.
 
+Event-Consumer verarbeiten standardmaessig jeweils ein Event gleichzeitig. Die
+Parallelitaet kann pro Plugin-Name konfiguriert werden; der persistente Cursor
+wird dabei nur bis zum hoechsten lueckenlos fertig verarbeiteten Event
+weitergeschoben:
+
+```nix
+services."llm-harness".parallelity = {
+  terminal = 4;
+  "llm-provider-runner" = 2;
+};
+```
+
+Direkt per Umgebung entspricht dies
+`HARNESS_PARALLELITY='{"terminal":4,"llm-provider-runner":2}'`.
+
 ## Container-Isolation
 
 `terminal` startet Container nach Bedarf:

@@ -99,6 +99,19 @@ in
       description = "Log raw streaming provider events for debugging missing model output such as tool calls.";
     };
 
+    parallelity = lib.mkOption {
+      type = lib.types.attrsOf lib.types.ints.positive;
+      default = { };
+      example = {
+        terminal = 4;
+        "llm-provider-runner" = 2;
+      };
+      description = ''
+        Maximum number of events each named event consumer plugin may process
+        concurrently. Plugins not listed here process one event at a time.
+      '';
+    };
+
     chatgptOAuth = {
       authorizationUrl = lib.mkOption {
         type = lib.types.nullOr lib.types.str;
@@ -284,6 +297,7 @@ in
           HARNESS_NAMER_MODEL = cfg.namerModel;
           HARNESS_SKILLS = builtins.toJSON (map toString cfg.skills);
           HARNESS_LOG_PROVIDER_EVENTS = if cfg.logProviderEvents then "1" else "0";
+          HARNESS_PARALLELITY = builtins.toJSON cfg.parallelity;
           HARNESS_PODMAN_IMAGE = cfg.podmanImage;
           HARNESS_PODMAN_MOUNT_NIX_STORE = if cfg.podmanMountNixStore then "1" else "0";
           HARNESS_TAG_CONTAINER_MAP = tagContainerMapValue;

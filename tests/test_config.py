@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_harness.config import Settings, parse_tag_container_map
+from llm_harness.config import Settings, parse_parallelity, parse_tag_container_map
 
 
 def test_parse_tag_container_map():
@@ -84,3 +84,18 @@ def test_settings_reads_namer_model_and_provider(monkeypatch):
 
     assert settings.namer_provider == "openrouter"
     assert settings.namer_model == "openai/gpt-4.1-mini"
+
+
+def test_settings_reads_event_consumer_parallelity(monkeypatch):
+    monkeypatch.setenv("HARNESS_PARALLELITY", '{"terminal": 4, "llm-provider-runner": 2}')
+
+    assert Settings.from_env().parallelity == {"terminal": 4, "llm-provider-runner": 2}
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["[]", '{"terminal": 0}', '{"terminal": true}', '{"": 2}', "not-json"],
+)
+def test_parse_parallelity_rejects_invalid_configuration(raw):
+    with pytest.raises(ValueError, match="HARNESS_PARALLELITY"):
+        parse_parallelity(raw)

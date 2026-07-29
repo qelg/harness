@@ -37,6 +37,7 @@ class Settings:
     codex_oauth_refresh_skew_seconds: int
     mock_llm_response: str
     workers_inline: bool
+    parallelity: dict[str, int]
     default_provider: str
     default_model: str
     namer_provider: str
@@ -71,6 +72,7 @@ class Settings:
             codex_oauth_refresh_skew_seconds=int(os.getenv("HARNESS_CODEX_OAUTH_REFRESH_SKEW_SECONDS", "120")),
             mock_llm_response=os.getenv("HARNESS_MOCK_LLM_RESPONSE", "mock llm response"),
             workers_inline=parse_bool(os.getenv("HARNESS_WORKERS_INLINE", "0")),
+            parallelity=parse_parallelity(os.getenv("HARNESS_PARALLELITY", "{}")),
             default_provider=os.getenv("HARNESS_DEFAULT_PROVIDER", "mock-llm"),
             default_model=os.getenv("HARNESS_DEFAULT_MODEL", "test-model"),
             namer_provider=os.getenv(
@@ -130,3 +132,22 @@ def parse_skills(raw: str) -> tuple[Skill, ...]:
             names.add(name)
             skills.append(Skill(name=name, path=path))
     return tuple(skills)
+
+
+def parse_parallelity(raw: str) -> dict[str, int]:
+    try:
+        configured = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("HARNESS_PARALLELITY must be a JSON object") from exc
+    if not isinstance(configured, dict) or any(
+        not isinstance(name, str)
+        or not name.strip()
+        or isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        for name, value in configured.items()
+    ):
+        raise ValueError(
+            "HARNESS_PARALLELITY must map non-empty event consumer plugin names to positive integers"
+        )
+    return dict(configured)
