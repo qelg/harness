@@ -5,7 +5,7 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from llm_harness.api import create_app
-from llm_harness.core.types import LlmRunFailed, ToolCallRequested
+from llm_harness.core.types import LlmRunFailed, SessionCreated, ToolCallRequested
 
 
 def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatch):
@@ -26,6 +26,28 @@ def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatc
     restarted_response = restarted_client.get("/sessions")
     assert restarted_response.status_code == 200
     assert restarted_response.json() == [session]
+
+
+def test_api_hides_derived_sessions_from_top_level_list(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    parent = client.post("/sessions", json={"title": "user session"}).json()
+    asyncio.run(
+        app.state.bus.append_message(
+            SessionCreated(
+                session_id="sess_derived",
+                title="internal session",
+                parent_session_id=parent["id"],
+            ),
+            producer="test-plugin",
+        )
+    )
+
+    response = client.get("/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == [parent]
 
 
 def test_api_serves_frontend(tmp_path, monkeypatch):

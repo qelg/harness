@@ -109,6 +109,7 @@ class HarnessApiPlugin:
             sessions = [
                 _session_from_events(bus, event)
                 for event in bus.replay(EventFilter(names=frozenset({SessionCreated.name})))
+                if "parent_session" not in event.tags
             ]
             if tag is None:
                 return sessions

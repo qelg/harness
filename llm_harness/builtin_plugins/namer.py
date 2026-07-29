@@ -47,7 +47,9 @@ class NamerPlugin(EventConsumer):
         if event.tags.get("state") not in {"running", "finished"}:
             return
         parent_session_id = event.tags["session"]
-        if _namer_session_for(bus, parent_session_id) is not None:
+        # Derived sessions are never named recursively. The relationship tag is
+        # also what keeps them out of the top-level user session list.
+        if _parent_session_for(bus, parent_session_id) is not None:
             return
         if not _is_actual_state_change(bus, event):
             return
@@ -165,11 +167,11 @@ def _session_created(bus: EventBus, session_id: str) -> EventRecord | None:
     return events[0] if events else None
 
 
-def _namer_session_for(bus: EventBus, session_id: str) -> EventRecord | None:
+def _parent_session_for(bus: EventBus, session_id: str) -> str | None:
     created = _session_created(bus, session_id)
-    if created is not None and created.tags.get("namer") == "true":
-        return created
-    return None
+    if created is None:
+        return None
+    return created.tags.get("parent_session")
 
 
 def _is_actual_state_change(bus: EventBus, event: EventRecord) -> bool:
