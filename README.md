@@ -76,10 +76,16 @@ Das eingebaute Tool `subagent` startet fuer einen uebergebenen Kontext eine neue
 mit `subagent` markierte Child-Session. Der Tool-Result bestaetigt den Start direkt
 mit der neuen Session-ID. Sobald sowohl die Child-Session als auch ihre Parent-Session
 im Zustand `finished` sind, kopiert das Plugin die finale Antwort genau einmal mit
-dem Praefix `subagent response:` als neue User-Message in die Parent-Session:
+dem Praefix `subagent response:` als neue User-Message in die Parent-Session.
+Ohne weitere Angabe verwendet die Child-Session Provider, Modell und Run-Optionen
+des aufrufenden Modells. Mit `model` kann das Modell optional ueberschrieben werden:
 
 ```json
 {"context":"Pruefe die Implementierung und berichte die wichtigsten Risiken."}
+```
+
+```json
+{"context":"Pruefe nur die Sicherheitsrisiken.","model":"specialist-model"}
 ```
 
 ## Plugin-Schnittstelle

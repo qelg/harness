@@ -7,6 +7,8 @@ import pytest
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
+    LlmRunRequested,
+    ModelSelected,
     SessionCreated,
     SessionStateChanged,
     ToolCall,
@@ -35,6 +37,18 @@ def test_subagent_tool_requires_context():
         )
     )
     assert result.output == "Investigate the failure"
+    assert result.metadata == {}
+
+    configured = asyncio.run(
+        tool.run(
+            ToolCall(
+                session=ToolSession(id="sess_parent"),
+                name="subagent",
+                input={"context": "Investigate", "model": "  specialist-model  "},
+            )
+        )
+    )
+    assert configured.metadata == {"model": "specialist-model"}
 
     with pytest.raises(ValueError, match="non-empty string field 'context'"):
         asyncio.run(
@@ -46,6 +60,122 @@ def test_subagent_tool_requires_context():
                 )
             )
         )
+
+    with pytest.raises(ValueError, match="field 'model' must be a non-empty string"):
+        asyncio.run(
+            tool.run(
+                ToolCall(
+                    session=ToolSession(id="sess_parent"),
+                    name="subagent",
+                    input={"context": "Investigate", "model": "  "},
+                )
+            )
+        )
+
+
+def test_subagent_inherits_calling_model_and_run_options(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = SubagentPlugin(tool=SubagentTool())
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_parent")))
+    calling_run = asyncio.run(
+        bus.append_message(
+            LlmRunRequested(
+                session_id="sess_parent",
+                provider="openrouter",
+                model="calling-model",
+                run_id="llm_parent",
+                toolsets=("default",),
+                thinking_level="high",
+                reasoning_summary=True,
+            )
+        )
+    )
+    calling_assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_parent",
+                content="delegating",
+                provider="openrouter",
+                model="calling-model",
+                run_id="llm_parent",
+            ),
+            causation_id=calling_run.id,
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id="sess_parent",
+                tool="subagent",
+                input={"context": "Investigate."},
+                run_id="call_subagent_1",
+            ),
+            causation_id=calling_assistant.id,
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, request))
+
+    child = bus.replay(
+        EventFilter(
+            names=frozenset({SessionCreated.name}),
+            tags={"parent_session": "sess_parent"},
+        )
+    )[0]
+    selection = bus.replay(
+        EventFilter(
+            names=frozenset({ModelSelected.name}),
+            tags={"session": child.tags["session"]},
+        )
+    )[0]
+    assert selection.tags["provider"] == "openrouter"
+    assert selection.tags["model"] == "calling-model"
+    assert selection.payload["toolsets"] == ["default"]
+    assert selection.payload["thinking_level"] == "high"
+    assert selection.payload["reasoning_summary"] is True
+
+
+def test_subagent_model_parameter_overrides_calling_model(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = SubagentPlugin(tool=SubagentTool())
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_parent")))
+    calling_assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_parent",
+                content="delegating",
+                provider="openrouter",
+                model="calling-model",
+                run_id="llm_parent",
+            )
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id="sess_parent",
+                tool="subagent",
+                input={"context": "Investigate.", "model": "specialist-model"},
+                run_id="call_subagent_1",
+            ),
+            causation_id=calling_assistant.id,
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, request))
+
+    selection = bus.replay(
+        EventFilter(names=frozenset({ModelSelected.name}))
+    )[0]
+    assert selection.tags["provider"] == "openrouter"
+    assert selection.tags["model"] == "specialist-model"
+    acknowledgement = bus.replay(
+        EventFilter(
+            names=frozenset({"chat.message.tool.created"}),
+            tags={"run": "call_subagent_1"},
+        )
+    )[0]
+    assert acknowledgement.payload["metadata"]["model"] == "specialist-model"
 
 
 def test_tool_request_starts_tagged_child_and_acknowledges_session_id(tmp_path):

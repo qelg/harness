@@ -3,10 +3,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from llm_harness.builtin_plugins.model_choice import ModelChoice, model_choice_for
+from llm_harness.config import Settings
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord, EventToAppend
 from llm_harness.core.types import (
     AssistantMessageCreated,
+    LlmRunRequested,
+    ModelSelected,
     SessionCreated,
     SessionStateChanged,
     ToolCall,
@@ -29,7 +33,8 @@ class SubagentTool:
     name = "subagent"
     description = (
         "Start a subagent in a child session. The tool returns the new session ID immediately; "
-        "after both sessions finish, the subagent's final response is sent back to this session."
+        "after both sessions finish, the subagent's final response is sent back to this session. "
+        "By default the subagent uses the calling model; optionally provide a model override."
     )
     input_schema = {
         "type": "object",
@@ -37,7 +42,13 @@ class SubagentTool:
             "context": {
                 "type": "string",
                 "description": "The task and context to give to the subagent.",
-            }
+            },
+            "model": {
+                "type": "string",
+                "description": (
+                    "Optional model override. Defaults to the model that called the tool."
+                ),
+            },
         },
         "required": ["context"],
         "additionalProperties": False,
@@ -47,10 +58,16 @@ class SubagentTool:
         context = call.input.get("context")
         if not isinstance(context, str) or not context.strip():
             raise ValueError("tool input requires non-empty string field 'context'")
+        model = call.input.get("model")
+        if model is not None and (not isinstance(model, str) or not model.strip()):
+            raise ValueError("tool input field 'model' must be a non-empty string")
         # Starting the child and persisting the acknowledgement must happen in
         # one event-store transaction, so the event consumer performs those
         # operations after this tool has validated the input.
-        return ToolResult(output=context)
+        return ToolResult(
+            output=context,
+            metadata={"model": model.strip()} if isinstance(model, str) else {},
+        )
 
 
 class SubagentPlugin(EventConsumer):
@@ -62,8 +79,9 @@ class SubagentPlugin(EventConsumer):
         names=frozenset({ToolCallRequested.name, SessionStateChanged.name})
     )
 
-    def __init__(self, *, tool: SubagentTool):
+    def __init__(self, *, tool: SubagentTool, settings: Settings | None = None):
         self.tool = tool
+        self.settings = settings or Settings.from_env()
         # Keep the replay-before-append idempotency checks atomic even if this
         # consumer is configured with parallelity greater than one.
         self._mutation_lock = asyncio.Lock()
@@ -90,6 +108,16 @@ class SubagentPlugin(EventConsumer):
             input=event.payload.get("input", {}),
         )
         validated = await self.tool.run(call)
+        choice = _model_choice_for_request(bus, event, settings=self.settings)
+        configured_model = validated.metadata.get("model")
+        if isinstance(configured_model, str):
+            choice = ModelChoice(
+                provider=choice.provider,
+                model=configured_model,
+                toolsets=choice.toolsets,
+                thinking_level=choice.thinking_level,
+                reasoning_summary=choice.reasoning_summary,
+            )
         child_session_id = new_session_id()
         correlation_id = event.correlation_id or event.id
 
@@ -99,6 +127,19 @@ class SubagentPlugin(EventConsumer):
                 title=SUBAGENT_SESSION_TAG,
                 session_tags=(SUBAGENT_SESSION_TAG,),
                 parent_session_id=event.tags["session"],
+            ),
+            ModelSelected(
+                provider=choice.provider,
+                model=choice.model,
+                toolsets=choice.toolsets,
+                thinking_level=choice.thinking_level,
+                reasoning_summary=choice.reasoning_summary,
+                session_id=child_session_id,
+                metadata={
+                    "subagent": True,
+                    "parent_session_id": event.tags["session"],
+                    "tool_request_event_id": event.id,
+                },
             ),
             UserMessageCreated(
                 session_id=child_session_id,
@@ -117,6 +158,8 @@ class SubagentPlugin(EventConsumer):
                 metadata={
                     "subagent_session_id": child_session_id,
                     "parent_session_id": event.tags["session"],
+                    "provider": choice.provider,
+                    "model": choice.model,
                 },
             ),
         )
@@ -201,6 +244,37 @@ class SubagentPlugin(EventConsumer):
             causation_id=child_state.id,
             correlation_id=child_state.correlation_id or child_state.id,
         )
+
+
+def _model_choice_for_request(
+    bus: EventBus, request: EventRecord, *, settings: Settings
+) -> ModelChoice:
+    fallback = model_choice_for(bus, request.tags["session"], settings)
+    assistant = _event_by_id(bus, request.causation_id)
+    if assistant is None or assistant.name != AssistantMessageCreated.name:
+        return fallback
+
+    provider = assistant.tags.get("provider")
+    model = assistant.tags.get("model")
+    if not provider or not model:
+        return fallback
+
+    calling_run = _event_by_id(bus, assistant.causation_id)
+    if calling_run is None or calling_run.name != LlmRunRequested.name:
+        return ModelChoice(
+            provider=provider,
+            model=model,
+            toolsets=fallback.toolsets,
+            thinking_level=fallback.thinking_level,
+            reasoning_summary=fallback.reasoning_summary,
+        )
+    return ModelChoice(
+        provider=provider,
+        model=model,
+        toolsets=tuple(calling_run.payload.get("toolsets", fallback.toolsets)),
+        thinking_level=calling_run.payload.get("thinking_level"),
+        reasoning_summary=bool(calling_run.payload.get("reasoning_summary", False)),
+    )
 
 
 def _child_for_request(bus: EventBus, request: EventRecord) -> EventRecord | None:
