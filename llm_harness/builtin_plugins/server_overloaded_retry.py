@@ -80,6 +80,7 @@ class ServerOverloadedRetryPlugin(EventConsumer):
                 run_id=new_run_id("llm"),
                 toolsets=tuple(toolsets),
                 thinking_level=request_payload.get("thinking_level"),
+                reasoning_summary=bool(request_payload.get("reasoning_summary", False)),
                 user_message_event_id=user_message_event_id,
                 metadata=metadata,
             ),

@@ -34,6 +34,7 @@ class LlmProviderRunnerPlugin(EventConsumer):
         provider = None if registry is None else registry.providers.get(provider_name)
         toolsets = tuple(event.payload.get("toolsets", ()))
         thinking_level = event.payload.get("thinking_level")
+        reasoning_summary = bool(event.payload.get("reasoning_summary", False))
 
         if provider is None:
             await self._fail(
@@ -76,7 +77,12 @@ class LlmProviderRunnerPlugin(EventConsumer):
             messages = self._messages_for_session(bus, session_id=session_id, before_event_id=event.id)
             sequence = 0
             async for stream_event in _stream_provider_response(
-                provider, model=model, messages=messages, tools=tools, thinking_level=thinking_level
+                provider,
+                model=model,
+                messages=messages,
+                tools=tools,
+                thinking_level=thinking_level,
+                reasoning_summary=reasoning_summary,
             ):
                 if stream_event.type == "completed":
                     provider_response = stream_event.response
@@ -207,10 +213,13 @@ async def _stream_provider_response(
     messages: list[Message],
     tools: list[ToolSpec],
     thinking_level: str | None,
+    reasoning_summary: bool,
 ):
     kwargs = {"model": model, "messages": messages, "tools": tools}
     if thinking_level is not None:
         kwargs["thinking_level"] = thinking_level
+    if reasoning_summary:
+        kwargs["reasoning_summary"] = True
     if hasattr(provider, "stream_response"):
         async for event in provider.stream_response(**kwargs):
             yield event

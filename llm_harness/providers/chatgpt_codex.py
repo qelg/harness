@@ -30,9 +30,14 @@ class ChatGPTCodexProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
         thinking_level: str | None = None,
+        reasoning_summary: bool = False,
     ) -> AsyncIterator[str]:
         async for event in self.stream_response(
-            model=model, messages=messages, tools=tools, thinking_level=thinking_level
+            model=model,
+            messages=messages,
+            tools=tools,
+            thinking_level=thinking_level,
+            reasoning_summary=reasoning_summary,
         ):
             if event.type == "delta" and event.delta:
                 yield event.delta
@@ -44,6 +49,7 @@ class ChatGPTCodexProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
         thinking_level: str | None = None,
+        reasoning_summary: bool = False,
     ) -> AsyncIterator[ProviderStreamEvent]:
         access_token = await self.tokens.access_token()
         payload = {
@@ -53,10 +59,12 @@ class ChatGPTCodexProvider:
             "input": _responses_input(messages),
             "store": False,
         }
-        if thinking_level is not None:
-            payload["reasoning"] = {
-                "effort": thinking_level
-            }
+        if thinking_level is not None or reasoning_summary:
+            payload["reasoning"] = {}
+            if thinking_level is not None:
+                payload["reasoning"]["effort"] = thinking_level
+            if reasoning_summary:
+                payload["reasoning"]["summary"] = "auto"
         if self.settings.prompt_cache_key is not None:
             payload["prompt_cache_key"] = self.settings.prompt_cache_key
         if tools:

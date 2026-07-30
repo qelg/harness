@@ -25,6 +25,7 @@ class CapturingProvider:
         self.messages: Sequence[Message] = ()
         self.tools: Sequence[ToolSpec] = ()
         self.thinking_level: str | None = None
+        self.reasoning_summary = False
 
     async def stream_chat(
         self,
@@ -33,7 +34,9 @@ class CapturingProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
         thinking_level: str | None = None,
+        reasoning_summary: bool = False,
     ) -> AsyncIterator[str]:
+        self.reasoning_summary = reasoning_summary
         self.thinking_level = thinking_level
         self.messages = messages
         self.tools = tools
@@ -98,6 +101,7 @@ async def _assert_llm_provider_runner_streams_deltas_and_creates_assistant_messa
             run_id="llm_1",
             toolsets=("test-tools",),
             thinking_level="medium",
+            reasoning_summary=True,
         )
     )
 
@@ -111,6 +115,7 @@ async def _assert_llm_provider_runner_streams_deltas_and_creates_assistant_messa
     assert provider.messages[1].metadata["tool"] == "shell"
     assert [tool.name for tool in provider.tools] == ["echo"]
     assert provider.thinking_level == "medium"
+    assert provider.reasoning_summary is True
     assert [event.payload["delta"] for event in deltas] == ["hel", "lo"]
     assert [event.durable for event in deltas] == [False, False]
     assert bus.replay(EventFilter(names=frozenset({"llm.delta"}), tags={"run": "llm_1"})) == []

@@ -48,6 +48,7 @@ class SelectModelRequest(BaseModel):
     toolsets: list[str] | None = None
     session_id: str | None = None
     thinking_level: Literal["none", "low", "medium", "high"] | None = None
+    reasoning_summary: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -86,6 +87,7 @@ class HarnessApiPlugin:
                     model=request.model,
                     toolsets=tuple(toolsets),
                     thinking_level=request.thinking_level,
+                    reasoning_summary=request.reasoning_summary,
                     session_id=request.session_id,
                     metadata=request.metadata,
                 ),
@@ -503,6 +505,7 @@ def _model_selection_for(bus: EventBus, session_id: str, *, settings: Settings) 
         "model": settings.default_model,
         "toolsets": list(settings.default_toolsets),
         "thinking_level": None,
+        "reasoning_summary": False,
         "scope": "default",
         "session_id": session_id,
         "event_id": None,
@@ -516,6 +519,7 @@ def _model_selection_from_event(event: BusEvent, *, scope: str) -> dict[str, Any
         "model": event.tags["model"],
         "toolsets": event.payload.get("toolsets", []),
         "thinking_level": event.payload.get("thinking_level"),
+        "reasoning_summary": event.payload.get("reasoning_summary", False),
         "scope": scope,
         "session_id": event.tags.get("session"),
         "event_id": event.id,

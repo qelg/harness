@@ -34,6 +34,7 @@ class LlmRunRequesterPlugin(EventConsumer):
                 run_id=new_run_id("llm"),
                 toolsets=choice.toolsets,
                 thinking_level=choice.thinking_level,
+                reasoning_summary=choice.reasoning_summary,
                 user_message_event_id=event.id,
             ),
             producer=self.name,

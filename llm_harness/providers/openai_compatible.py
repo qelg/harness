@@ -36,9 +36,14 @@ class OpenAICompatibleProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
         thinking_level: str | None = None,
+        reasoning_summary: bool = False,
     ) -> AsyncIterator[str]:
         async for event in self.stream_response(
-            model=model, messages=messages, tools=tools, thinking_level=thinking_level
+            model=model,
+            messages=messages,
+            tools=tools,
+            thinking_level=thinking_level,
+            reasoning_summary=reasoning_summary,
         ):
             if event.type == "delta" and event.delta:
                 yield event.delta
@@ -50,6 +55,7 @@ class OpenAICompatibleProvider:
         messages: Sequence[Message],
         tools: Sequence[ToolSpec] = (),
         thinking_level: str | None = None,
+        reasoning_summary: bool = False,
     ) -> AsyncIterator[ProviderStreamEvent]:
         if not self.api_key:
             raise RuntimeError(f"missing API key for provider {self.name}")
