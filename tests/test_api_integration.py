@@ -277,6 +277,7 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
             "model": "anthropic/claude",
             "session_id": session_id,
             "thinking_level": "medium",
+            "reasoning_summary": True,
         },
     )
 
@@ -288,7 +289,10 @@ def test_api_creates_model_selection_event(tmp_path, monkeypatch):
     assert event["tags"]["model"] == "anthropic/claude"
     assert event["payload"]["toolsets"] == ["default"]
     assert event["payload"]["thinking_level"] == "medium"
-    assert client.get(f"/sessions/{session_id}/model-selection").json()["thinking_level"] == "medium"
+    assert event["payload"]["reasoning_summary"] is True
+    selection = client.get(f"/sessions/{session_id}/model-selection").json()
+    assert selection["thinking_level"] == "medium"
+    assert selection["reasoning_summary"] is True
 
 
 def test_api_rejects_unknown_thinking_level(tmp_path, monkeypatch):

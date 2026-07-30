@@ -58,8 +58,11 @@ Modell und Thinking-Level koennen pro Session gewaehlt werden. Erlaubte Thinking
 ```bash
 curl -X POST http://127.0.0.1:8000/model-selection \
   -H 'content-type: application/json' \
-  -d '{"provider":"openrouter","model":"openai/gpt-5","thinking_level":"medium","session_id":"sess_1"}'
+  -d '{"provider":"chatgpt-codex","model":"gpt-5","thinking_level":"medium","reasoning_summary":true,"session_id":"sess_1"}'
 ```
+
+Mit `reasoning_summary: true` fordert `chatgpt-codex` zusaetzlich eine automatische
+Zusammenfassung der Modell-Ueberlegungen an. Andere Provider ignorieren diese Option.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/sessions/1/tools/terminal \

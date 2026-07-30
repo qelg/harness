@@ -46,6 +46,7 @@ class ToolResultLlmRequesterPlugin(EventConsumer):
                 run_id=new_run_id("llm"),
                 toolsets=choice.toolsets,
                 thinking_level=choice.thinking_level,
+                reasoning_summary=choice.reasoning_summary,
                 metadata={
                     "trigger": "tool_results_completed",
                     "assistant_message_event_id": assistant.id,

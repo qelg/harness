@@ -231,6 +231,7 @@ class ModelSelected:
     model: str
     toolsets: tuple[str, ...] = ()
     thinking_level: str | None = None
+    reasoning_summary: bool = False
     session_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -242,6 +243,7 @@ class ModelSelected:
             "model": self.model,
             "toolsets": list(self.toolsets),
             "thinking_level": self.thinking_level,
+            "reasoning_summary": self.reasoning_summary,
             "session_id": self.session_id,
             "metadata": self.metadata,
         }
@@ -262,6 +264,7 @@ class LlmRunRequested:
     run_id: str
     toolsets: tuple[str, ...] = ()
     thinking_level: str | None = None
+    reasoning_summary: bool = False
     user_message_event_id: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -274,6 +277,7 @@ class LlmRunRequested:
             "run_id": self.run_id,
             "toolsets": list(self.toolsets),
             "thinking_level": self.thinking_level,
+            "reasoning_summary": self.reasoning_summary,
             "user_message_event_id": self.user_message_event_id,
             "metadata": self.metadata,
         }

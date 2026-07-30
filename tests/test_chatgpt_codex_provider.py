@@ -71,7 +71,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
             }
         ]
         assert payload["store"] is False
-        assert payload["reasoning"] == {"effort": "high"}
+        assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
         assert payload["prompt_cache_key"] == "shared-harness"
         return httpx.Response(
             200,
@@ -98,7 +98,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
         return [
             delta
             async for delta in provider.stream_chat(
-                model="codex", messages=[message], tools=[tool], thinking_level="high"
+                model="codex", messages=[message], tools=[tool], thinking_level="high", reasoning_summary=True
             )
         ]
 
@@ -113,7 +113,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
         return [
             event
             async for event in provider.stream_response(
-                model="codex", messages=[message], tools=[tool], thinking_level="high"
+                model="codex", messages=[message], tools=[tool], thinking_level="high", reasoning_summary=True
             )
         ]
 
