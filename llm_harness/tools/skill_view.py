@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 class SkillViewTool:
     name = "skill_view"
+    description = "Read a configured skill's SKILL.md instructions or one of its supporting files."
     input_schema = {
         "type": "object",
         "properties": {
@@ -42,11 +43,6 @@ class SkillViewTool:
 
     def __init__(self, *, settings: Settings):
         self.skills = {skill.name: skill for skill in settings.skills}
-        available = ", ".join(sorted(self.skills)) or "(none configured)"
-        self.description = (
-            "Read a configured skill's SKILL.md instructions or one of its supporting files. "
-            f"Available skills: {available}."
-        )
 
     async def run(self, call: ToolCall) -> ToolResult:
         name = call.input.get("name")

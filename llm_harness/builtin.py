@@ -9,6 +9,7 @@ from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
 from llm_harness.builtin_plugins.namer import NamerPlugin
 from llm_harness.builtin_plugins.server_overloaded_retry import ServerOverloadedRetryPlugin
 from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+from llm_harness.builtin_plugins.system_prompt import SystemPromptPlugin
 from llm_harness.builtin_plugins.tool_call_requester import ToolCallRequesterPlugin
 from llm_harness.builtin_plugins.tool_result_llm_requester import ToolResultLlmRequesterPlugin
 from llm_harness.builtin_plugins.unifiedpush import UnifiedPushPlugin
@@ -58,6 +59,7 @@ def register(registry, *, bus=None) -> None:
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
     registry.add_event_consumer_plugin(SessionStatePlugin())
+    registry.add_event_consumer_plugin(SystemPromptPlugin(settings=settings))
     unifiedpush = UnifiedPushPlugin()
     registry.add_api_plugin(unifiedpush)
     registry.add_event_consumer_plugin(unifiedpush)
