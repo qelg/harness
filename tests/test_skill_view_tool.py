@@ -24,9 +24,12 @@ def call(tool, input_):
     return asyncio.run(tool.run(ToolCall(session=ToolSession(id="sess_1"), name="skill_view", input=input_)))
 
 
-def test_description_lists_configured_skills(tmp_path, monkeypatch):
+def test_description_is_static(tmp_path, monkeypatch):
+    """The tool description is a static string; skills are listed in the system prompt instead."""
     tool = configured_tool(tmp_path, monkeypatch)
-    assert "Available skills: python." in tool.description
+    assert tool.description == (
+        "Read a configured skill's SKILL.md instructions or one of its supporting files."
+    )
 
 
 def test_reads_skill_instructions_and_supporting_file_range(tmp_path, monkeypatch):
