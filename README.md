@@ -5,7 +5,7 @@ Ein kleines, erweiterbares Harness fuer session-isolierte LLM-Chats.
 ## Enthalten
 
 - LLM-Provider als Plugins: eingebaut sind `openai-codex`, `openrouter` und `mock-llm`.
-- Tools als Plugins: eingebaut sind `terminal` und `skill_view`.
+- Tools als Plugins: eingebaut sind `terminal`, `skill_view` und `subagent`.
 - Sessions mit Tags als persistente Events in SQLite.
 - Messages und Workflow-Zustand als persistente Events in SQLite.
 - Streaming-Antworten via Server-Sent Events.
@@ -68,6 +68,18 @@ Zusammenfassung der Modell-Ueberlegungen an. Andere Provider ignorieren diese Op
 curl -X POST http://127.0.0.1:8000/sessions/1/tools/terminal \
   -H 'content-type: application/json' \
   -d '{"input":{"cmd":"pwd"}}'
+```
+
+## Subagents
+
+Das eingebaute Tool `subagent` startet fuer einen uebergebenen Kontext eine neue,
+mit `subagent` markierte Child-Session. Der Tool-Result bestaetigt den Start direkt
+mit der neuen Session-ID. Sobald sowohl die Child-Session als auch ihre Parent-Session
+im Zustand `finished` sind, kopiert das Plugin die finale Antwort genau einmal mit
+dem Praefix `subagent response:` als neue User-Message in die Parent-Session:
+
+```json
+{"context":"Pruefe die Implementierung und berichte die wichtigsten Risiken."}
 ```
 
 ## Plugin-Schnittstelle
