@@ -53,7 +53,7 @@ def register(registry, *, bus=None) -> None:
     registry.add_event_consumer_plugin(SkillViewToolConsumer(tool=skill_view))
     subagent = SubagentTool()
     registry.add_tool(subagent)
-    registry.add_event_consumer_plugin(SubagentPlugin(tool=subagent))
+    registry.add_event_consumer_plugin(SubagentPlugin(tool=subagent, settings=settings))
     registry.add_toolset(DefaultToolSet())
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
