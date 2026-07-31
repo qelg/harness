@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -111,6 +112,15 @@ class HarnessApiPlugin:
 
         @app.get("/sessions")
         async def list_sessions(tag: str | None = None) -> list[dict[str, Any]]:
+            if bus.projections_ready:
+                rows = bus.conn.execute(
+                    "SELECT session_id, parent_session_id, title, tags_json, created_event_id, created_at_ms "
+                    "FROM projected_sessions WHERE parent_session_id IS NULL ORDER BY created_event_id"
+                ).fetchall()
+                sessions = [_session_from_projection_row(row) for row in rows]
+                if tag is None:
+                    return sessions
+                return [session for session in sessions if tag in session["tags"]]
             sessions = [
                 _session_from_events(bus, event)
                 for event in bus.replay(EventFilter(names=frozenset({SessionCreated.name})))
@@ -123,6 +133,13 @@ class HarnessApiPlugin:
         @app.get("/sessions/{session_id}/children")
         async def list_child_sessions(session_id: str) -> list[dict[str, Any]]:
             _require_session_event(bus, session_id)
+            if bus.projections_ready:
+                rows = bus.conn.execute(
+                    "SELECT session_id, parent_session_id, title, tags_json, created_event_id, created_at_ms "
+                    "FROM projected_sessions WHERE parent_session_id = ? ORDER BY created_event_id",
+                    (session_id,),
+                ).fetchall()
+                return [_session_from_projection_row(row) for row in rows]
             return [
                 _session_from_events(bus, event)
                 for event in bus.replay(
@@ -136,6 +153,12 @@ class HarnessApiPlugin:
         @app.get("/session-states")
         async def list_session_states() -> list[dict[str, Any]]:
             """Return each session's latest state, newest activity first."""
+            if bus.projections_ready:
+                rows = bus.conn.execute(
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "FROM projected_session_states ORDER BY event_id DESC"
+                ).fetchall()
+                return [_session_state_from_projection_row(row) for row in rows]
             latest_by_session: dict[str, BusEvent] = {}
             for event in bus.replay(
                 EventFilter(names=frozenset({SessionStateChanged.name}))
@@ -151,6 +174,31 @@ class HarnessApiPlugin:
         @app.post("/sessions/{session_id}/state/read")
         async def mark_session_state_read(session_id: str) -> dict[str, Any]:
             _require_session_event(bus, session_id)
+            if bus.projections_ready:
+                row = bus.conn.execute(
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "FROM projected_session_states WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is None or row["state"] != "finished":
+                    raise HTTPException(
+                        status_code=409, detail="only a finished session can be marked read"
+                    )
+                if row["read_state"] == "read":
+                    return _session_state_from_projection_row(row)
+                event = await bus.append_message(
+                    SessionStateChanged(
+                        session_id=session_id,
+                        state="finished",
+                        source_event_id=row["source_event_id"],
+                        read="read",
+                        outcome=row["outcome"],
+                    ),
+                    producer="harness-api",
+                    causation_id=row["event_id"],
+                    correlation_id=row["event_id"],
+                )
+                return _session_state_from_event(event)
             state_events = bus.replay(
                 EventFilter(
                     names=frozenset({SessionStateChanged.name}),
@@ -181,6 +229,46 @@ class HarnessApiPlugin:
         @app.post("/sessions/{session_id}/state/archive")
         async def archive_session_state(session_id: str) -> dict[str, Any]:
             _require_session_event(bus, session_id)
+            if bus.projections_ready:
+                row = bus.conn.execute(
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "FROM projected_session_states WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                if row is not None and row["archived"]:
+                    return _session_state_from_projection_row(row)
+                if row is None:
+                    created_row = bus.conn.execute(
+                        "SELECT created_event_id FROM projected_sessions WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                    state = "finished"
+                    read = "read"
+                    source_event_id = created_row["created_event_id"]
+                    outcome = None
+                    causation_id = created_row["created_event_id"]
+                    correlation_id = created_row["created_event_id"]
+                else:
+                    state = row["state"]
+                    read = row["read_state"]
+                    source_event_id = row["source_event_id"]
+                    outcome = row["outcome"]
+                    causation_id = row["event_id"]
+                    correlation_id = row["event_id"]
+                event = await bus.append_message(
+                    SessionStateChanged(
+                        session_id=session_id,
+                        state=state,
+                        source_event_id=source_event_id,
+                        read=read,
+                        outcome=outcome,
+                        archived=True,
+                    ),
+                    producer="harness-api",
+                    causation_id=causation_id,
+                    correlation_id=correlation_id,
+                )
+                return _session_state_from_event(event)
             state_events = bus.replay(
                 EventFilter(
                     names=frozenset({SessionStateChanged.name}),
@@ -381,6 +469,13 @@ def _contains_function_call(content: Any) -> bool:
 
 
 def _require_session_event(bus: EventBus, session_id: str) -> None:
+    if bus.projections_ready:
+        row = bus.conn.execute(
+            "SELECT 1 FROM projected_sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is not None:
+            return
+        raise HTTPException(status_code=404, detail=f"unknown session: {session_id}")
     events = bus.replay(EventFilter(names=frozenset({"session.created"}), tags={"session": session_id}), limit=1)
     if not events:
         raise HTTPException(status_code=404, detail=f"unknown session: {session_id}")
@@ -390,6 +485,34 @@ def _require_toolsets(registry: Registry, toolsets: list[str]) -> None:
     unknown = sorted(set(toolsets) - set(registry.toolsets))
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown toolset: {', '.join(unknown)}")
+
+
+
+def _session_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
+    session = {
+        "id": row["session_id"],
+        "title": row["title"],
+        "tags": json.loads(row["tags_json"]),
+        "created_at_ms": row["created_at_ms"],
+        "event_id": row["created_event_id"],
+    }
+    parent_session_id = row["parent_session_id"]
+    if parent_session_id is not None:
+        session["parent_session_id"] = parent_session_id
+    return session
+
+
+def _session_state_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "session_id": row["session_id"],
+        "state": row["state"],
+        "read": row["read_state"],
+        "archive": "true" if row["archived"] else None,
+        "source_event_id": row["source_event_id"],
+        "outcome": row["outcome"],
+        "event_id": row["event_id"],
+        "created_at_ms": row["created_at_ms"],
+    }
 
 
 def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
@@ -407,11 +530,21 @@ def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
 
 def _session_from_events(bus: EventBus, event: BusEvent) -> dict[str, Any]:
     title = event.payload.get("title")
-    latest_rename = bus.latest(
-        EventFilter(names=frozenset({SessionRenamed.name}), tags={"session": event.tags["session"]})
-    )
-    if latest_rename is not None:
-        title = latest_rename.payload["title"]
+    parent_session_id = event.tags.get(PARENT_SESSION)
+    if bus.projections_ready:
+        row = bus.conn.execute(
+            "SELECT title, parent_session_id FROM projected_sessions WHERE session_id = ?",
+            (event.tags["session"],),
+        ).fetchone()
+        if row is not None:
+            title = row["title"]
+            parent_session_id = row["parent_session_id"]
+    else:
+        latest_rename = bus.latest(
+            EventFilter(names=frozenset({SessionRenamed.name}), tags={"session": event.tags["session"]})
+        )
+        if latest_rename is not None:
+            title = latest_rename.payload["title"]
     session = {
         "id": event.tags["session"],
         "title": title,
@@ -419,12 +552,9 @@ def _session_from_events(bus: EventBus, event: BusEvent) -> dict[str, Any]:
         "created_at_ms": event.created_at_ms,
         "event_id": event.id,
     }
-    parent_session_id = event.tags.get(PARENT_SESSION)
     if parent_session_id is not None:
         session["parent_session_id"] = parent_session_id
     return session
-
-
 def _message_from_event(event: BusEvent) -> dict[str, Any]:
     if event.name == "llm.run.failed":
         return _failed_run_message_from_event(event)
@@ -484,6 +614,54 @@ def _message_update_from_event(event: BusEvent) -> dict[str, Any]:
 
 
 def _model_selection_for(bus: EventBus, session_id: str, *, settings: Settings) -> dict[str, Any]:
+    if bus.projections_ready:
+        rows = bus.conn.execute(
+            "SELECT scope_key, provider, model, toolsets_json, thinking_level, reasoning_summary, event_id, created_at_ms "
+            "FROM projected_model_selections WHERE scope_key IN ('global', ?) ORDER BY scope_key",
+            (f"session:{session_id}",),
+        ).fetchall()
+        session_row = None
+        global_row = None
+        for row in rows:
+            if row["scope_key"] == f"session:{session_id}":
+                session_row = row
+            elif row["scope_key"] == "global":
+                global_row = row
+        if session_row is not None:
+            return {
+                "provider": session_row["provider"],
+                "model": session_row["model"],
+                "toolsets": json.loads(session_row["toolsets_json"]),
+                "thinking_level": session_row["thinking_level"],
+                "reasoning_summary": bool(session_row["reasoning_summary"]),
+                "scope": "session",
+                "session_id": session_id,
+                "event_id": session_row["event_id"],
+                "created_at_ms": session_row["created_at_ms"],
+            }
+        if global_row is not None:
+            return {
+                "provider": global_row["provider"],
+                "model": global_row["model"],
+                "toolsets": json.loads(global_row["toolsets_json"]),
+                "thinking_level": global_row["thinking_level"],
+                "reasoning_summary": bool(global_row["reasoning_summary"]),
+                "scope": "global",
+                "session_id": session_id,
+                "event_id": global_row["event_id"],
+                "created_at_ms": global_row["created_at_ms"],
+            }
+        return {
+            "provider": settings.default_provider,
+            "model": settings.default_model,
+            "toolsets": list(settings.default_toolsets),
+            "thinking_level": None,
+            "reasoning_summary": False,
+            "scope": "default",
+            "session_id": session_id,
+            "event_id": None,
+            "created_at_ms": None,
+        }
     selected = bus.replay(EventFilter(names=frozenset({ModelSelected.name})))
     session_event: BusEvent | None = None
     global_event: BusEvent | None = None

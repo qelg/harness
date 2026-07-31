@@ -86,12 +86,18 @@ class EventService:
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._subscribers: dict[asyncio.Queue[EventRecord], EventFilter] = {}
         self._append_lock = asyncio.Lock()
+        self._projections_ready = False
         self.init_schema()
         self._last_event_id = self._load_last_event_id()
+        self.backfill_projections()
 
     @property
     def conn(self) -> sqlite3.Connection:
         return self._conn
+
+    @property
+    def projections_ready(self) -> bool:
+        return self._projections_ready
 
     def init_schema(self) -> None:
         self._conn.executescript(
@@ -120,10 +126,61 @@ class EventService:
               updated_at_ms INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS projected_sessions (
+              session_id TEXT PRIMARY KEY,
+              parent_session_id TEXT,
+              title TEXT,
+              title_event_id INTEGER NOT NULL,
+              tags_json TEXT NOT NULL,
+              created_event_id INTEGER NOT NULL,
+              created_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS projected_session_tags (
+              session_id TEXT NOT NULL REFERENCES projected_sessions(session_id) ON DELETE CASCADE,
+              tag TEXT NOT NULL,
+              PRIMARY KEY (session_id, tag)
+            );
+
+            CREATE TABLE IF NOT EXISTS projected_session_states (
+              session_id TEXT PRIMARY KEY,
+              state TEXT NOT NULL,
+              read_state TEXT,
+              archived INTEGER NOT NULL DEFAULT 0,
+              source_event_id INTEGER NOT NULL,
+              outcome TEXT,
+              event_id INTEGER NOT NULL,
+              created_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS projected_model_selections (
+              scope_key TEXT PRIMARY KEY,
+              session_id TEXT,
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              toolsets_json TEXT NOT NULL,
+              thinking_level TEXT,
+              reasoning_summary INTEGER NOT NULL DEFAULT 0,
+              event_id INTEGER NOT NULL,
+              created_at_ms INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS projection_checkpoints (
+              projection TEXT PRIMARY KEY,
+              last_event_id INTEGER NOT NULL DEFAULT 0,
+              updated_at_ms INTEGER NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_name_id ON events(name, id);
             CREATE INDEX IF NOT EXISTS idx_event_tags_tag_value_event ON event_tags(tag, value, event_id);
             CREATE INDEX IF NOT EXISTS idx_events_causation_name_producer_id
               ON events(causation_id, name, producer, id);
+            CREATE INDEX IF NOT EXISTS idx_projected_sessions_parent_created
+              ON projected_sessions(parent_session_id, created_event_id);
+            CREATE INDEX IF NOT EXISTS idx_projected_session_tags_tag_session
+              ON projected_session_tags(tag, session_id);
+            CREATE INDEX IF NOT EXISTS idx_projected_session_states_activity
+              ON projected_session_states(event_id DESC);
             """
         )
 
@@ -215,6 +272,8 @@ class EventService:
                             "INSERT INTO event_tags(event_id, tag, value) VALUES (?, ?, ?)",
                             [(record.id, tag, value) for tag, value in sorted(record.tags.items())],
                         )
+                    # Apply projection for this event within the same transaction
+                    self._apply_projection_for_event(record)
                     records.append(record)
 
             for record in records:
@@ -525,6 +584,143 @@ class EventService:
     def _load_last_event_id(self) -> int:
         row = self._conn.execute("SELECT COALESCE(MAX(id), 0) AS id FROM events").fetchone()
         return int(row["id"])
+
+    # ── Projection helpers ──────────────────────────────────────────────
+
+    def _load_projection_checkpoint(self) -> int:
+        row = self._conn.execute(
+            "SELECT last_event_id FROM projection_checkpoints WHERE projection = 'core'"
+        ).fetchone()
+        return int(row["last_event_id"]) if row else 0
+
+    def _save_projection_checkpoint(self, event_id: int) -> None:
+        now = _epoch_ms()
+        self._conn.execute(
+            """
+            INSERT INTO projection_checkpoints(projection, last_event_id, updated_at_ms)
+            VALUES ('core', ?, ?)
+            ON CONFLICT(projection) DO UPDATE SET
+              last_event_id = excluded.last_event_id,
+              updated_at_ms = excluded.updated_at_ms
+            """,
+            (event_id, now),
+        )
+
+    def _apply_projection_for_event(self, record: EventRecord) -> None:
+        if record.name == "session.created":
+            session_id = record.tags["session"]
+            parent_session_id = record.tags.get("parent_session")
+            title = record.payload.get("title")
+            tags_json = json.dumps(record.payload.get("tags", []))
+            title_event_id = record.id
+            created_event_id = record.id
+            created_at_ms = record.created_at_ms
+            self._conn.execute(
+                """
+                INSERT INTO projected_sessions(session_id, parent_session_id, title, title_event_id, tags_json, created_event_id, created_at_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  parent_session_id = excluded.parent_session_id,
+                  title = excluded.title,
+                  title_event_id = excluded.title_event_id,
+                  tags_json = excluded.tags_json,
+                  created_event_id = excluded.created_event_id,
+                  created_at_ms = excluded.created_at_ms
+                WHERE excluded.created_event_id > projected_sessions.created_event_id
+                """,
+                (session_id, parent_session_id, title, title_event_id, tags_json, created_event_id, created_at_ms),
+            )
+            # Replace tags
+            self._conn.execute("DELETE FROM projected_session_tags WHERE session_id = ?", (session_id,))
+            tags = record.payload.get("tags", [])
+            if tags:
+                self._conn.executemany(
+                    "INSERT INTO projected_session_tags(session_id, tag) VALUES (?, ?)",
+                    [(session_id, tag) for tag in tags],
+                )
+
+        elif record.name == "session.renamed":
+            session_id = record.tags["session"]
+            title = record.payload.get("title")
+            self._conn.execute(
+                "UPDATE projected_sessions SET title = ?, title_event_id = ? WHERE session_id = ? AND title_event_id < ?",
+                (title, record.id, session_id, record.id),
+            )
+
+        elif record.name == "session.state":
+            session_id = record.tags["session"]
+            state = record.tags["state"]
+            read_state = record.tags.get("read")
+            archived = 1 if record.tags.get("archive") == "true" else 0
+            source_event_id = record.payload["source_event_id"]
+            outcome = record.payload.get("outcome")
+            self._conn.execute(
+                """
+                INSERT INTO projected_session_states(
+                  session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                  state = excluded.state,
+                  read_state = excluded.read_state,
+                  archived = excluded.archived,
+                  source_event_id = excluded.source_event_id,
+                  outcome = excluded.outcome,
+                  event_id = excluded.event_id,
+                  created_at_ms = excluded.created_at_ms
+                WHERE excluded.event_id > projected_session_states.event_id
+                """,
+                (session_id, state, read_state, archived, source_event_id, outcome, record.id, record.created_at_ms),
+            )
+
+        elif record.name == "llm.model.selected":
+            session_id = record.tags.get("session")
+            scope_key = f"session:{session_id}" if session_id else "global"
+            provider = record.tags["provider"]
+            model = record.tags["model"]
+            toolsets_json = json.dumps(record.payload.get("toolsets", []))
+            thinking_level = record.payload.get("thinking_level")
+            reasoning_summary = 1 if record.payload.get("reasoning_summary") else 0
+            self._conn.execute(
+                """
+                INSERT INTO projected_model_selections(scope_key, session_id, provider, model, toolsets_json, thinking_level, reasoning_summary, event_id, created_at_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope_key) DO UPDATE SET
+                  session_id = excluded.session_id,
+                  provider = excluded.provider,
+                  model = excluded.model,
+                  toolsets_json = excluded.toolsets_json,
+                  thinking_level = excluded.thinking_level,
+                  reasoning_summary = excluded.reasoning_summary,
+                  event_id = excluded.event_id,
+                  created_at_ms = excluded.created_at_ms
+                WHERE excluded.event_id > projected_model_selections.event_id
+                """,
+                (scope_key, session_id, provider, model, toolsets_json, thinking_level, reasoning_summary, record.id, record.created_at_ms),
+            )
+
+    def backfill_projections(self) -> None:
+        checkpoint = self._load_projection_checkpoint()
+        high_water = self._last_event_id
+        if checkpoint >= high_water:
+            self._projections_ready = True
+            return
+        batch_size = 500
+        after = checkpoint
+        while after < high_water:
+            events = self.replay_page(
+                EventFilter(since_id=after),
+                after_id=after,
+                before_id=high_water + 1,
+                limit=batch_size,
+            )
+            if not events:
+                break
+            with self._conn:
+                for record in events:
+                    self._apply_projection_for_event(record)
+                self._save_projection_checkpoint(record.id)
+            after = record.id
+        self._projections_ready = True
 
     def _next_event_id(self) -> int:
         candidate = _epoch_ms()
