@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from llm_harness.core.events import EventFilter, EventService, EventToAppend
 
@@ -370,3 +371,116 @@ def test_replay_page_empty_result(tmp_path):
     service = EventService(tmp_path / "events.db")
     page = service.replay_page(EventFilter(tags={"session": "nonexistent"}))
     assert page == []
+
+
+def test_replay_filters_by_tag_in_sql(tmp_path):
+    """Tag predicates are pushed into SQL via EXISTS, not Python-side matches()."""
+    service = EventService(tmp_path / "events.db")
+    asyncio.run(service.append("session.created", {"title": "one"}, tags={"session": "1"}))
+    r2 = asyncio.run(service.append("session.created", {"title": "two"}, tags={"session": "2"}))
+
+    captured = []
+    service.conn.set_trace_callback(captured.append)
+
+    replayed = service.replay(EventFilter(tags={"session": "2"}))
+    assert len(replayed) == 1
+    assert replayed[0].id == r2.id
+    assert any("EXISTS(SELECT 1 FROM event_tags" in sql for sql in captured)
+    # Exactly one batch tag-load query, not one per candidate row.
+    batch_queries = [sql for sql in captured if sql.startswith("SELECT event_id, tag, value FROM event_tags")]
+    assert len(batch_queries) == 1
+
+
+def test_replay_applies_limit_in_sql(tmp_path):
+    """LIMIT is applied at the SQL level, so only the selected rows are loaded."""
+    service = EventService(tmp_path / "events.db")
+    for i in range(10):
+        asyncio.run(service.append("session.created", {"idx": i}, tags={"session": "1"}))
+
+    captured = []
+    service.conn.set_trace_callback(captured.append)
+
+    replayed = service.replay(EventFilter(tags={"session": "1"}), limit=3)
+    assert len(replayed) == 3
+    assert [e.id for e in replayed] == sorted(e.id for e in replayed)
+    main_sql = next(sql for sql in captured if sql.startswith("SELECT e.* FROM events e"))
+    assert main_sql.endswith("LIMIT 3")
+    # The batch tag query only loads tags for the 3 selected event ids.
+    tag_sql = [sql for sql in captured if sql.startswith("SELECT event_id, tag, value FROM event_tags")]
+    assert len(tag_sql) == 1
+    ids = re.search(r"WHERE event_id IN \(([^)]*)\)", tag_sql[0]).group(1).split(", ")
+    assert len(ids) == 3
+
+
+def test_replay_batch_loads_tags(tmp_path):
+    """All tags for the returned events are hydrated with a single query."""
+    service = EventService(tmp_path / "events.db")
+    for i in range(10):
+        asyncio.run(service.append(
+            "session.created",
+            {"idx": i},
+            tags={"session": "1", "extra": str(i)},
+        ))
+
+    captured = []
+    service.conn.set_trace_callback(captured.append)
+
+    replayed = service.replay(EventFilter(tags={"session": "1"}))
+    assert len(replayed) == 10
+    for i, event in enumerate(replayed):
+        assert event.tags["session"] == "1"
+        assert event.tags["extra"] == str(i)
+    tag_queries = [sql for sql in captured if sql.startswith("SELECT event_id, tag, value FROM event_tags")]
+    assert len(tag_queries) == 1
+
+
+def test_replay_name_prefixes_still_works(tmp_path):
+    service = EventService(tmp_path / "events.db")
+    asyncio.run(service.append("session.created", {"title": "one"}, tags={"session": "1"}))
+    asyncio.run(service.append("session.deleted", {"title": "two"}, tags={"session": "1"}))
+    r3 = asyncio.run(service.append("chat.message.create_requested", {"content": "hello"}, tags={"session": "1"}))
+
+    replayed = service.replay(EventFilter(name_prefixes=("chat.",), tags={"session": "1"}))
+    assert len(replayed) == 1
+    assert replayed[0].id == r3.id
+
+
+def test_replay_combined_filters(tmp_path):
+    service = EventService(tmp_path / "events.db")
+    r1 = asyncio.run(service.append("session.created", {"idx": 0}, tags={"session": "1"}))
+    r2 = asyncio.run(service.append("session.created", {"idx": 1}, tags={"session": "1"}))
+    asyncio.run(service.append("session.deleted", {"idx": 2}, tags={"session": "1"}))
+    asyncio.run(service.append("session.created", {"idx": 3}, tags={"session": "2"}))
+
+    replayed = service.replay(
+        EventFilter(since_id=r1.id, names=frozenset({"session.created"}), tags={"session": "1"}),
+        limit=1,
+    )
+    assert replayed == [r2]
+
+
+def test_replay_backward_compatible(tmp_path):
+    """Same inputs produce the same results as the pre-pushdown behavior."""
+    service = EventService(tmp_path / "events.db")
+    r1 = asyncio.run(service.append("session.created", {"title": "one"}, tags={"session": "1", "role": "user"}))
+    r2 = asyncio.run(service.append("session.created", {"title": "two"}, tags={"session": "1", "role": "assistant"}))
+    r3 = asyncio.run(service.append("session.deleted", {"title": "three"}, tags={"session": "2"}))
+
+    # no filter: all events in ascending id order
+    assert [e.id for e in service.replay()] == [r1.id, r2.id, r3.id]
+
+    # names filter
+    assert [e.id for e in service.replay(EventFilter(names=frozenset({"session.deleted"})))] == [r3.id]
+
+    # tags filter
+    assert [e.id for e in service.replay(EventFilter(tags={"session": "1"}))] == [r1.id, r2.id]
+
+    # name_prefixes filter
+    assert [e.id for e in service.replay(EventFilter(name_prefixes=("session.",)))] == [r1.id, r2.id, r3.id]
+    assert [e.id for e in service.replay(EventFilter(name_prefixes=("chat.",)))] == []
+
+    # since_id filter
+    assert [e.id for e in service.replay(EventFilter(since_id=r1.id))] == [r2.id, r3.id]
+
+    # limit
+    assert [e.id for e in service.replay(EventFilter(tags={"session": "1"}), limit=1)] == [r1.id]

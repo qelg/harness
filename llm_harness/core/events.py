@@ -278,19 +278,50 @@ class EventService:
 
     def replay(self, event_filter: EventFilter | None = None, *, limit: int | None = None) -> list[EventRecord]:
         event_filter = event_filter or EventFilter()
-        sql = "SELECT * FROM events WHERE id > ?"
+        conditions = ["e.id > ?"]
         params: list[Any] = [event_filter.since_id or 0]
+
         if event_filter.names:
             placeholders = ", ".join("?" for _ in event_filter.names)
-            sql += f" AND name IN ({placeholders})"
+            conditions.append(f"e.name IN ({placeholders})")
             params.extend(sorted(event_filter.names))
-        sql += " ORDER BY id ASC"
 
-        records = [_event_from_row(self._conn, row) for row in self._conn.execute(sql, params).fetchall()]
-        matched = [event for event in records if event_filter.matches(event)]
-        if limit is None:
-            return matched
-        return matched[:limit]
+        # Tag pushdown: one EXISTS per tag so tags are filtered in SQL before
+        # any row is fetched, decoded, or hydrated.
+        for tag, value in sorted(event_filter.tags.items()):
+            conditions.append(
+                "EXISTS(SELECT 1 FROM event_tags WHERE event_id = e.id AND tag = ? AND value = ?)"
+            )
+            params.extend([tag, value])
+
+        sql = "SELECT e.* FROM events e WHERE " + " AND ".join(conditions) + " ORDER BY e.id ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        if not rows:
+            return []
+
+        # name_prefixes is a startswith check that cannot be pushed into a
+        # simple SQL predicate; apply it in Python before hydrating tags so we
+        # never fetch tags for prefix-nonmatching events.
+        if event_filter.name_prefixes:
+            rows = [
+                row for row in rows
+                if any(row["name"].startswith(prefix) for prefix in event_filter.name_prefixes)
+            ]
+            if not rows:
+                return []
+
+        # Batch-load tags for all remaining rows (one query, not N+1).
+        event_ids = [row["id"] for row in rows]
+        tag_map = _load_tags_batch(self._conn, event_ids)
+
+        return [
+            _event_from_row_with_tags(row, tag_map.get(row["id"], {}))
+            for row in rows
+        ]
 
 
     def get_event(self, event_id: int) -> EventRecord | None:
@@ -487,6 +518,36 @@ class EventService:
 
 EventBus = EventService
 BusEvent = EventRecord
+
+
+def _load_tags_batch(conn: sqlite3.Connection, event_ids: list[int]) -> dict[int, dict[str, str]]:
+    """Load tags for many events in one query, keyed by event_id."""
+    if not event_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in event_ids)
+    rows = conn.execute(
+        f"SELECT event_id, tag, value FROM event_tags WHERE event_id IN ({placeholders}) ORDER BY event_id, tag",
+        event_ids,
+    ).fetchall()
+    tag_map: dict[int, dict[str, str]] = {}
+    for row in rows:
+        eid = int(row["event_id"])
+        tag_map.setdefault(eid, {})[row["tag"]] = row["value"]
+    return tag_map
+
+
+def _event_from_row_with_tags(row: sqlite3.Row, tags: dict[str, str]) -> EventRecord:
+    return EventRecord(
+        id=int(row["id"]),
+        name=row["name"],
+        payload=json.loads(row["payload_json"]),
+        tags=tags,
+        created_at_ms=int(row["created_at_ms"]),
+        producer=row["producer"],
+        causation_id=row["causation_id"],
+        correlation_id=row["correlation_id"],
+        durable=bool(row["durable"]),
+    )
 
 
 def _event_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> EventRecord:
