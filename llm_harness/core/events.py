@@ -292,6 +292,160 @@ class EventService:
             return matched
         return matched[:limit]
 
+
+    def get_event(self, event_id: int) -> EventRecord | None:
+        """Direct point lookup by integer primary key."""
+        row = self._conn.execute(
+            "SELECT * FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return _event_from_row(self._conn, row)
+
+    def exists(self, filter: EventFilter, before_id: int | None = None) -> bool:
+        """Return True if a matching event exists, without decoding payloads.
+
+        Pushes tag filtering fully into SQL. Does NOT hydrate tags or decode
+        payload_json. Uses SELECT 1 ... LIMIT 1.
+        """
+        conditions = ["1=1"]
+        params: list[Any] = []
+
+        if filter.since_id is not None:
+            conditions.append("e.id > ?")
+            params.append(filter.since_id)
+        if before_id is not None:
+            conditions.append("e.id < ?")
+            params.append(before_id)
+        if filter.names:
+            placeholders = ", ".join("?" for _ in filter.names)
+            conditions.append(f"e.name IN ({placeholders})")
+            params.extend(sorted(filter.names))
+        for tag, value in sorted(filter.tags.items()):
+            conditions.append(
+                "EXISTS(SELECT 1 FROM event_tags WHERE event_id = e.id AND tag = ? AND value = ?)"
+            )
+            params.extend([tag, value])
+
+        sql = "SELECT 1 FROM events e WHERE " + " AND ".join(conditions) + " LIMIT 1"
+        row = self._conn.execute(sql, params).fetchone()
+        return row is not None
+
+    def latest(self, filter: EventFilter, before_id: int | None = None) -> EventRecord | None:
+        """Return the most recent matching event, or None.
+
+        Pushes tag filtering into SQL, uses ORDER BY id DESC LIMIT 1.
+        """
+        conditions = ["1=1"]
+        params: list[Any] = []
+
+        if filter.since_id is not None:
+            conditions.append("e.id > ?")
+            params.append(filter.since_id)
+        if before_id is not None:
+            conditions.append("e.id < ?")
+            params.append(before_id)
+        if filter.names:
+            placeholders = ", ".join("?" for _ in filter.names)
+            conditions.append(f"e.name IN ({placeholders})")
+            params.extend(sorted(filter.names))
+        for tag, value in sorted(filter.tags.items()):
+            conditions.append(
+                "EXISTS(SELECT 1 FROM event_tags WHERE event_id = e.id AND tag = ? AND value = ?)"
+            )
+            params.extend([tag, value])
+
+        sql = "SELECT * FROM events e WHERE " + " AND ".join(conditions) + " ORDER BY e.id DESC LIMIT 1"
+        row = self._conn.execute(sql, params).fetchone()
+        if row is None:
+            return None
+        return _event_from_row(self._conn, row)
+
+    def replay_page(
+        self,
+        filter: EventFilter,
+        after_id: int | None = None,
+        before_id: int | None = None,
+        limit: int = 500,
+    ) -> list[EventRecord]:
+        """Keyset pagination with tag filtering pushed into SQL.
+
+        - after_id, before_id, names, tags, limit all in SQL.
+        - name_prefixes applied in Python after SQL.
+        - Tags are batch-loaded (one query with WHERE event_id IN (...)).
+        """
+        conditions = ["1=1"]
+        params: list[Any] = []
+
+        if after_id is not None:
+            conditions.append("e.id > ?")
+            params.append(after_id)
+        if before_id is not None:
+            conditions.append("e.id < ?")
+            params.append(before_id)
+        if filter.since_id is not None:
+            conditions.append("e.id > ?")
+            params.append(filter.since_id)
+        if filter.names:
+            placeholders = ", ".join("?" for _ in filter.names)
+            conditions.append(f"e.name IN ({placeholders})")
+            params.extend(sorted(filter.names))
+        for tag, value in sorted(filter.tags.items()):
+            conditions.append(
+                "EXISTS(SELECT 1 FROM event_tags WHERE event_id = e.id AND tag = ? AND value = ?)"
+            )
+            params.extend([tag, value])
+
+        sql = "SELECT * FROM events e WHERE " + " AND ".join(conditions) + " ORDER BY e.id ASC LIMIT ?"
+        params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        if not rows:
+            return []
+
+        # Batch-load tags for all returned rows
+        ids = [row["id"] for row in rows]
+        tag_rows = self._conn.execute(
+            "SELECT event_id, tag, value FROM event_tags WHERE event_id IN ({})".format(
+                ",".join("?" for _ in ids)
+            ),
+            ids,
+        ).fetchall()
+
+        # Group tags by event_id
+        tag_map: dict[int, dict[str, str]] = {}
+        for tr in tag_rows:
+            eid = tr["event_id"]
+            if eid not in tag_map:
+                tag_map[eid] = {}
+            tag_map[eid][tr["tag"]] = tr["value"]
+
+        records = []
+        for row in rows:
+            eid = row["id"]
+            record = EventRecord(
+                id=int(eid),
+                name=row["name"],
+                payload=json.loads(row["payload_json"]),
+                tags=tag_map.get(eid, {}),
+                created_at_ms=int(row["created_at_ms"]),
+                producer=row["producer"],
+                causation_id=row["causation_id"],
+                correlation_id=row["correlation_id"],
+                durable=bool(row["durable"]),
+            )
+            records.append(record)
+
+        # Apply name_prefixes filter in Python (can't be done efficiently in SQL)
+        if filter.name_prefixes:
+            records = [
+                event for event in records
+                if any(event.name.startswith(prefix) for prefix in filter.name_prefixes)
+            ]
+
+        return records
+
+
     def ack(self, subscriber: str, event_id: int) -> None:
         now = _epoch_ms()
         with self._conn:
