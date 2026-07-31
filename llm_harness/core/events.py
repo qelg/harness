@@ -53,12 +53,15 @@ class EventRecord:
 @dataclass(frozen=True)
 class EventFilter:
     since_id: int | None = None
+    before_id: int | None = None  # NEW: upper event ID bound (exclusive)
     names: frozenset[str] = frozenset()
     name_prefixes: tuple[str, ...] = ()
     tags: dict[str, str] = field(default_factory=dict)
 
     def matches(self, event: EventRecord) -> bool:
         if self.since_id is not None and event.id <= self.since_id:
+            return False
+        if self.before_id is not None and event.id >= self.before_id:
             return False
         if self.names and event.name not in self.names:
             return False
@@ -293,6 +296,9 @@ class EventService:
                 "EXISTS(SELECT 1 FROM event_tags WHERE event_id = e.id AND tag = ? AND value = ?)"
             )
             params.extend([tag, value])
+        if event_filter.before_id is not None:
+            conditions.append("e.id < ?")
+            params.append(event_filter.before_id)
 
         sql = "SELECT e.* FROM events e WHERE " + " AND ".join(conditions) + " ORDER BY e.id ASC"
         if limit is not None:
