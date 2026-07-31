@@ -484,3 +484,140 @@ def test_replay_backward_compatible(tmp_path):
 
     # limit
     assert [e.id for e in service.replay(EventFilter(tags={"session": "1"}), limit=1)] == [r1.id]
+
+
+def test_replay_filters_by_causation_id(tmp_path):
+    service = EventService(tmp_path / "events.db")
+    source = asyncio.run(service.append("chat.message.create_requested", {"content": "hi"}, tags={"session": "1"}))
+    child = asyncio.run(service.append(
+        "llm.run.requested",
+        {"run": "r1"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r1"},
+        causation_id=source.id,
+        producer="llm-run-requester",
+    ))
+    asyncio.run(service.append(
+        "llm.run.requested", {"run": "r2"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r2"}
+    ))
+
+    replayed = service.replay(EventFilter(causation_id=source.id))
+    assert [e.id for e in replayed] == [child.id]
+
+    replayed = service.replay(EventFilter(causation_id=source.id + 1000))
+    assert replayed == []
+
+
+def test_replay_filters_by_producer(tmp_path):
+    service = EventService(tmp_path / "events.db")
+    a = asyncio.run(service.append(
+        "llm.run.requested", {"run": "r1"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r1"},
+        producer="llm-run-requester",
+    ))
+    asyncio.run(service.append(
+        "llm.run.requested", {"run": "r2"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r2"},
+        producer="tool-result-llm-requester",
+    ))
+    asyncio.run(service.append(
+        "llm.run.requested", {"run": "r3"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r3"},
+        producer=None,
+    ))
+
+    replayed = service.replay(EventFilter(producer="llm-run-requester"))
+    assert [e.id for e in replayed] == [a.id]
+
+    replayed = service.replay(EventFilter(producer="no-such-producer"))
+    assert replayed == []
+
+
+def test_replay_causation_producer_name_combination(tmp_path):
+    """Matches the idx_events_causation_name_producer_id query pattern."""
+    service = EventService(tmp_path / "events.db")
+    source = asyncio.run(service.append(
+        "chat.message.assistant.created", {"content": "hi"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r0"},
+    ))
+    r1 = asyncio.run(service.append(
+        "llm.run.requested", {"run": "r1"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r1"},
+        causation_id=source.id, producer="tool-result-llm-requester",
+    ))
+    asyncio.run(service.append(
+        "llm.run.requested", {"run": "r2"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r2"},
+        causation_id=source.id, producer="server-overloaded-retry",
+    ))
+    asyncio.run(service.append(
+        "llm.run.requested", {"run": "r3"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r3"},
+        causation_id=source.id + 1, producer="tool-result-llm-requester",
+    ))
+
+    replayed = service.replay(EventFilter(
+        names=frozenset({"llm.run.requested"}),
+        causation_id=source.id,
+        producer="tool-result-llm-requester",
+    ), limit=1)
+    assert [e.id for e in replayed] == [r1.id]
+
+
+def test_replay_causation_producer_in_sql(tmp_path):
+    """causation_id and producer predicates are pushed into SQL."""
+    service = EventService(tmp_path / "events.db")
+    source = asyncio.run(service.append("chat.message.create_requested", {"content": "hi"}, tags={"session": "1"}))
+    asyncio.run(service.append(
+        "llm.run.requested", {"run": "r1"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r1"},
+        causation_id=source.id, producer="llm-run-requester",
+    ))
+
+    captured = []
+    service.conn.set_trace_callback(captured.append)
+
+    replayed = service.replay(EventFilter(
+        names=frozenset({"llm.run.requested"}),
+        tags={"session": "1"},
+        causation_id=source.id,
+        producer="llm-run-requester",
+    ), limit=1)
+    assert len(replayed) == 1
+
+    main_sql = next(sql for sql in captured if sql.startswith("SELECT e.* FROM events e"))
+    # sqlite's trace callback renders the bound parameters inline.
+    assert "e.causation_id = " in main_sql
+    assert "e.producer = '" in main_sql
+    assert main_sql.endswith("LIMIT 1")
+
+
+def test_matches_filters_by_causation_id_and_producer(tmp_path):
+    """EventFilter.matches honors causation_id and producer for dispatch."""
+    service = EventService(tmp_path / "events.db")
+    source = asyncio.run(service.append("chat.message.create_requested", {"content": "hi"}, tags={"session": "1"}))
+    child = asyncio.run(service.append(
+        "llm.run.requested", {"run": "r1"},
+        tags={"session": "1", "provider": "mock-llm", "model": "test", "run": "r1"},
+        causation_id=source.id, producer="llm-run-requester",
+    ))
+
+    # Causation filter
+    assert EventFilter(causation_id=source.id).matches(child)
+    assert not EventFilter(causation_id=source.id + 1).matches(child)
+    assert EventFilter(causation_id=None).matches(child)
+
+    # Producer filter
+    assert EventFilter(producer="llm-run-requester").matches(child)
+    assert not EventFilter(producer="other").matches(child)
+    assert EventFilter(producer=None).matches(child)
+
+    # Combined with tags and names
+    combined = EventFilter(
+        names=frozenset({"llm.run.requested"}),
+        tags={"session": "1"},
+        causation_id=source.id,
+        producer="llm-run-requester",
+    )
+    assert combined.matches(child)
+    assert not combined.matches(source)

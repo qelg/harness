@@ -64,17 +64,15 @@ class SessionStatePlugin(EventConsumer):
         )
 
     def _already_projected(self, bus: EventBus, event: EventRecord) -> bool:
-        state_events = bus.replay(
+        return bool(bus.replay(
             EventFilter(
                 names=frozenset({SessionStateChanged.name}),
                 tags={"session": event.tags["session"]},
-            )
-        )
-        return any(
-            state_event.causation_id == event.id
-            and state_event.producer == self.name
-            for state_event in state_events
-        )
+                causation_id=event.id,
+                producer=self.name,
+            ),
+            limit=1,
+        ))
 
 
 def _contains_tool_call(content: Any) -> bool:

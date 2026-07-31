@@ -34,13 +34,14 @@ class ToolCallRequesterPlugin(EventConsumer):
             )
 
     async def _already_requested(self, bus: EventBus, event: EventRecord) -> bool:
-        requests = bus.replay(
+        return bool(bus.replay(
             EventFilter(
                 names=frozenset({ToolCallRequested.name}),
                 tags={"session": event.tags["session"]},
-            )
-        )
-        return any(request.causation_id == event.id for request in requests)
+                causation_id=event.id,
+            ),
+            limit=1,
+        ))
 
 
 def _tool_calls_from_event(event: EventRecord) -> list[dict[str, Any]]:
