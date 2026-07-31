@@ -73,10 +73,9 @@ class NamerPlugin(EventConsumer):
                     {UserMessageCreated.name, AssistantMessageCreated.name}
                 ),
                 tags={"session": parent_session_id},
+                before_id=event.id,
             )
         ):
-            if source.id >= event.id:
-                continue
             content = source.payload.get("content")
             if (
                 source.name == AssistantMessageCreated.name
@@ -185,16 +184,13 @@ def _parent_session_for(bus: EventBus, session_id: str) -> str | None:
 
 
 def _is_actual_state_change(bus: EventBus, event: EventRecord) -> bool:
-    previous = [
-        candidate
-        for candidate in bus.replay(
-            EventFilter(
-                names=frozenset({SessionStateChanged.name}),
-                tags={"session": event.tags["session"]},
-            )
+    previous = bus.replay(
+        EventFilter(
+            names=frozenset({SessionStateChanged.name}),
+            tags={"session": event.tags["session"]},
+            before_id=event.id,
         )
-        if candidate.id < event.id
-    ]
+    )
     return not previous or previous[-1].tags.get("state") != event.tags.get("state")
 
 

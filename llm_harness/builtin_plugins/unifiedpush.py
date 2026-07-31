@@ -201,30 +201,24 @@ def _event_by_id(bus: EventBus, event_id: Any) -> EventRecord | None:
 
 
 def _is_transition_to_finished(bus: EventBus, event: EventRecord) -> bool:
-    previous = [
-        candidate
-        for candidate in bus.replay(
-            EventFilter(
-                names=frozenset({SessionStateChanged.name}),
-                tags={"session": event.tags["session"]},
-            )
+    previous = bus.replay(
+        EventFilter(
+            names=frozenset({SessionStateChanged.name}),
+            tags={"session": event.tags["session"]},
+            before_id=event.id,
         )
-        if candidate.id < event.id
-    ]
+    )
     return not previous or previous[-1].tags.get("state") != "finished"
 
 
 def _session_title(bus: EventBus, created: EventRecord, before_id: int) -> str:
-    renamed = [
-        event
-        for event in bus.replay(
-            EventFilter(
-                names=frozenset({SessionRenamed.name}),
-                tags={"session": created.tags["session"]},
-            )
+    renamed = bus.replay(
+        EventFilter(
+            names=frozenset({SessionRenamed.name}),
+            tags={"session": created.tags["session"]},
+            before_id=before_id,
         )
-        if event.id < before_id
-    ]
+    )
     title = renamed[-1].payload.get("title") if renamed else created.payload.get("title")
     return title.strip() if isinstance(title, str) and title.strip() else "Harness session"
 

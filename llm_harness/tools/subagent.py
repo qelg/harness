@@ -321,13 +321,9 @@ def _is_subagent_session(event: EventRecord) -> bool:
 
 
 def _latest_state(bus: EventBus, session_id: str) -> EventRecord | None:
-    events = bus.replay(
-        EventFilter(
-            names=frozenset({SessionStateChanged.name}),
-            tags={"session": session_id},
-        )
+    return bus.latest(
+        EventFilter(names=frozenset({SessionStateChanged.name}), tags={"session": session_id})
     )
-    return events[-1] if events else None
 
 
 def _is_finished(event: EventRecord | None) -> bool:

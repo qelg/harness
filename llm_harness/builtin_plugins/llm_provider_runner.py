@@ -167,13 +167,12 @@ class LlmProviderRunnerPlugin(EventConsumer):
         )
 
     def _messages_for_session(self, bus: EventBus, *, session_id: str, before_event_id: int) -> list[Message]:
-        events = bus.replay(EventFilter(names=MESSAGE_CREATED_NAMES, tags={"session": session_id}))
-        messages: list[Message] = []
-        for event in events:
-            if event.id >= before_event_id:
-                continue
-            messages.append(_message_from_event(event))
-        return messages
+        events = bus.replay(EventFilter(
+            names=MESSAGE_CREATED_NAMES,
+            tags={"session": session_id},
+            before_id=before_event_id,
+        ))
+        return [_message_from_event(event) for event in events]
 
 
 def _message_from_event(event: EventRecord) -> Message:

@@ -407,14 +407,11 @@ def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
 
 def _session_from_events(bus: EventBus, event: BusEvent) -> dict[str, Any]:
     title = event.payload.get("title")
-    renamed = bus.replay(
-        EventFilter(
-            names=frozenset({SessionRenamed.name}),
-            tags={"session": event.tags["session"]},
-        )
+    latest_rename = bus.latest(
+        EventFilter(names=frozenset({SessionRenamed.name}), tags={"session": event.tags["session"]})
     )
-    if renamed:
-        title = renamed[-1].payload["title"]
+    if latest_rename is not None:
+        title = latest_rename.payload["title"]
     session = {
         "id": event.tags["session"],
         "title": title,
