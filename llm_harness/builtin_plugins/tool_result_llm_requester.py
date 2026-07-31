@@ -72,10 +72,7 @@ class ToolResultLlmRequesterPlugin(EventConsumer):
 def _event_by_id(bus: EventBus, event_id: int | None) -> EventRecord | None:
     if event_id is None:
         return None
-    events = bus.replay(EventFilter(since_id=event_id - 1), limit=1)
-    if events and events[0].id == event_id:
-        return events[0]
-    return None
+    return bus.get_event(event_id)
 
 
 def _tool_requests_for_assistant(bus: EventBus, assistant: EventRecord) -> list[EventRecord]:

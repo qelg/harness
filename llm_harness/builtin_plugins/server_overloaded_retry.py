@@ -116,10 +116,7 @@ def _provider_error_code(event: EventRecord) -> str | None:
 def _event_by_id(bus: EventBus, event_id: int | None) -> EventRecord | None:
     if event_id is None:
         return None
-    events = bus.replay(EventFilter(since_id=event_id - 1), limit=1)
-    if events and events[0].id == event_id:
-        return events[0]
-    return None
+    return bus.get_event(event_id)
 
 
 def _next_retry_attempt(previous_request: EventRecord | None) -> int:
