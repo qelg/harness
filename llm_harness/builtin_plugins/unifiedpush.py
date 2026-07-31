@@ -197,12 +197,7 @@ def _session_created(bus: EventBus, session_id: str) -> EventRecord | None:
 def _event_by_id(bus: EventBus, event_id: Any) -> EventRecord | None:
     if not isinstance(event_id, int):
         return None
-    row = bus.conn.execute("SELECT id FROM events WHERE id = ?", (event_id,)).fetchone()
-    if row is None:
-        return None
-    # EventService deliberately keeps record construction private. A constrained
-    # replay finds the source while preserving the event/tag decoding contract.
-    return next((event for event in bus.replay() if event.id == event_id), None)
+    return bus.get_event(event_id)
 
 
 def _is_transition_to_finished(bus: EventBus, event: EventRecord) -> bool:

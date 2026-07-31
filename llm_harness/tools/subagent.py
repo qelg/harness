@@ -356,10 +356,7 @@ def _response_already_copied(
 def _event_by_id(bus: EventBus, event_id: Any) -> EventRecord | None:
     if not isinstance(event_id, int) or isinstance(event_id, bool):
         return None
-    events = bus.replay(EventFilter(since_id=event_id - 1), limit=1)
-    if events and events[0].id == event_id:
-        return events[0]
-    return None
+    return bus.get_event(event_id)
 
 
 def _text_content(content: Any) -> str:
