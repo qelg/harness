@@ -278,18 +278,17 @@ def _model_choice_for_request(
 
 
 def _child_for_request(bus: EventBus, request: EventRecord) -> EventRecord | None:
-    for event in bus.replay(
+    events = bus.replay(
         EventFilter(
             names=frozenset({SessionCreated.name}),
             tags={"parent_session": request.tags["session"]},
-        )
-    ):
-        if (
-            event.producer == SubagentPlugin.name
-            and event.causation_id == request.id
-            and _is_subagent_session(event)
-        ):
-            return event
+            causation_id=request.id,
+            producer=SubagentPlugin.name,
+        ),
+        limit=1,
+    )
+    if events and _is_subagent_session(events[0]):
+        return events[0]
     return None
 
 

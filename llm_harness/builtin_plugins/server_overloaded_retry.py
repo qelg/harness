@@ -90,13 +90,15 @@ class ServerOverloadedRetryPlugin(EventConsumer):
         )
 
     def _already_retried(self, bus: EventBus, event: EventRecord) -> bool:
-        requests = bus.replay(
+        return bool(bus.replay(
             EventFilter(
                 names=frozenset({LlmRunRequested.name}),
                 tags={"session": event.tags["session"]},
-            )
-        )
-        return any(request.causation_id == event.id and request.producer == self.name for request in requests)
+                causation_id=event.id,
+                producer=self.name,
+            ),
+            limit=1,
+        ))
 
 
 def _provider_error_code(event: EventRecord) -> str | None:

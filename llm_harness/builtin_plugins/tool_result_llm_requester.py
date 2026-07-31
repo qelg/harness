@@ -60,13 +60,14 @@ class ToolResultLlmRequesterPlugin(EventConsumer):
         )
 
     async def _already_requested(self, bus: EventBus, assistant: EventRecord) -> bool:
-        requests = bus.replay(
+        return bool(bus.replay(
             EventFilter(
                 names=frozenset({LlmRunRequested.name}),
                 tags={"session": assistant.tags["session"]},
-            )
-        )
-        return any(request.causation_id == assistant.id for request in requests)
+                causation_id=assistant.id,
+            ),
+            limit=1,
+        ))
 
 
 def _event_by_id(bus: EventBus, event_id: int | None) -> EventRecord | None:

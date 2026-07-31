@@ -195,22 +195,26 @@ def _is_actual_state_change(bus: EventBus, event: EventRecord) -> bool:
 
 
 def _namer_started_for_state(bus: EventBus, event: EventRecord) -> bool:
-    sessions = bus.replay(EventFilter(names=frozenset({SessionCreated.name})))
-    return any(
-        candidate.producer == NamerPlugin.name
-        and candidate.causation_id == event.id
-        and candidate.tags.get("namer") == "true"
-        for candidate in sessions
-    )
+    return bool(bus.replay(
+        EventFilter(
+            names=frozenset({SessionCreated.name}),
+            causation_id=event.id,
+            producer=NamerPlugin.name,
+            tags={"namer": "true"},
+        ),
+        limit=1,
+    ))
 
 
 def _already_renamed_from(bus: EventBus, event: EventRecord) -> bool:
-    return any(
-        candidate.producer == NamerPlugin.name and candidate.causation_id == event.id
-        for candidate in bus.replay(
-            EventFilter(names=frozenset({SessionRenamed.name}))
-        )
-    )
+    return bool(bus.replay(
+        EventFilter(
+            names=frozenset({SessionRenamed.name}),
+            causation_id=event.id,
+            producer=NamerPlugin.name,
+        ),
+        limit=1,
+    ))
 
 
 def _contains_tool_call(content: Any) -> bool:

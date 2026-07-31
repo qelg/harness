@@ -56,10 +56,11 @@ class LlmRunRequesterPlugin(EventConsumer):
         return bool(sessions)
 
     async def _already_requested(self, bus: EventBus, event: EventRecord) -> bool:
-        requests = bus.replay(
+        return bool(bus.replay(
             EventFilter(
                 names=frozenset({"llm.run.requested"}),
                 tags={"session": event.tags["session"]},
-            )
-        )
-        return any(request.causation_id == event.id for request in requests)
+                causation_id=event.id,
+            ),
+            limit=1,
+        ))

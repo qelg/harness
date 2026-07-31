@@ -57,6 +57,8 @@ class EventFilter:
     names: frozenset[str] = frozenset()
     name_prefixes: tuple[str, ...] = ()
     tags: dict[str, str] = field(default_factory=dict)
+    causation_id: int | None = None       # NEW
+    producer: str | None = None           # NEW
 
     def matches(self, event: EventRecord) -> bool:
         if self.since_id is not None and event.id <= self.since_id:
@@ -66,6 +68,10 @@ class EventFilter:
         if self.names and event.name not in self.names:
             return False
         if self.name_prefixes and not any(event.name.startswith(prefix) for prefix in self.name_prefixes):
+            return False
+        if self.causation_id is not None and event.causation_id != self.causation_id:  # NEW
+            return False
+        if self.producer is not None and event.producer != self.producer:              # NEW
             return False
         return all(event.tags.get(tag) == value for tag, value in self.tags.items())
 
@@ -116,6 +122,8 @@ class EventService:
 
             CREATE INDEX IF NOT EXISTS idx_events_name_id ON events(name, id);
             CREATE INDEX IF NOT EXISTS idx_event_tags_tag_value_event ON event_tags(tag, value, event_id);
+            CREATE INDEX IF NOT EXISTS idx_events_causation_name_producer_id
+              ON events(causation_id, name, producer, id);
             """
         )
 
@@ -299,6 +307,14 @@ class EventService:
         if event_filter.before_id is not None:
             conditions.append("e.id < ?")
             params.append(event_filter.before_id)
+
+        if event_filter.causation_id is not None:
+            conditions.append("e.causation_id = ?")
+            params.append(event_filter.causation_id)
+
+        if event_filter.producer is not None:
+            conditions.append("e.producer = ?")
+            params.append(event_filter.producer)
 
         sql = "SELECT e.* FROM events e WHERE " + " AND ".join(conditions) + " ORDER BY e.id ASC"
         if limit is not None:
