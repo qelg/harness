@@ -15,7 +15,11 @@ from llm_harness.core.types import (
     UserMessageCreated,
 )
 from llm_harness.plugins import Registry
-from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
+from llm_harness.builtin_plugins.llm_provider_runner import (
+    LlmProviderRunnerPlugin,
+    _session_allows_subagents,
+    _tools_for_toolsets,
+)
 
 
 class CapturingProvider:
@@ -55,6 +59,47 @@ class TestToolSet:
                 input_schema={"type": "object", "properties": {"text": {"type": "string"}}},
             )
         ]
+
+
+class RecursionToolSet:
+    name = "recursion-tools"
+
+    def tools(self, *, registry) -> Sequence[ToolSpec]:
+        return [
+            ToolSpec(name="echo", description="", input_schema={}),
+            ToolSpec(name="subagent", description="", input_schema={}),
+        ]
+
+
+def test_subagent_tool_is_hidden_for_children_without_recursive_budget(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    registry = Registry()
+    registry.add_toolset(RecursionToolSet())
+    asyncio.run(
+        bus.append_message(
+            SessionCreated(
+                session_id="child",
+                session_tags=("subagent",),
+                metadata={"recursive_subagent_limit": 0},
+            )
+        )
+    )
+
+    assert not _session_allows_subagents(bus, "child")
+    assert [tool.name for tool in _tools_for_toolsets(
+        registry, ("recursion-tools",), allow_subagents=_session_allows_subagents(bus, "child")
+    )] == ["echo"]
+
+    asyncio.run(
+        bus.append_message(
+            SessionCreated(
+                session_id="delegating-child",
+                session_tags=("subagent",),
+                metadata={"recursive_subagent_limit": 1},
+            )
+        )
+    )
+    assert _session_allows_subagents(bus, "delegating-child")
 
 
 class FullResponseProvider:

@@ -82,10 +82,17 @@ Toolsets und Reasoning-Summary des exakten aufrufenden Runs. `provider`, `model`
 und `thinking_level` (`none`, `low`, `medium`, `high`) koennen unabhaengig
 voneinander ueberschrieben werden. `same_container` ist standardmaessig `false`;
 bei `true` teilen Child und Parent den effektiv aufgeloesten Terminal-Container
-(auch ueber verschachtelte Subagents hinweg).
+(auch ueber verschachtelte Subagents hinweg). Subagents erhalten das Tool
+`subagent` nicht selbst. Um eine begrenzte Delegationskette zu erlauben, setzt
+nur die urspruengliche Session `recursive_subagent_limit` auf die Zahl weiterer
+erlaubter Ebenen; das Budget wird mit jeder Ebene um eins reduziert.
 
 ```json
 {"context":"Pruefe die Implementierung und berichte die wichtigsten Risiken."}
+```
+
+```json
+{"context":"Lass Unteragenten bei Bedarf weiter delegieren.","recursive_subagent_limit":2}
 ```
 
 ```json
