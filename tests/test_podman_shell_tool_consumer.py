@@ -270,3 +270,50 @@ def test_podman_shell_stops_container_after_last_parallel_command(monkeypatch):
         assert stop_calls == ["llm-harness-session-sess_1"]
 
     asyncio.run(run_parallel_commands())
+
+
+def test_podman_shell_same_container_uses_owner_tags_and_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_TAG_CONTAINER_MAP", "project-a=shared-project")
+    bus = EventService(tmp_path / "events.db")
+    tool = FakePodmanShellTool(settings=Settings.from_env())
+    consumer = PodmanShellToolConsumer(tool=tool)
+    asyncio.run(
+        bus.append_message(
+            SessionCreated(session_id="parent", session_tags=("project-a",))
+        )
+    )
+    asyncio.run(
+        bus.append_message(
+            SessionCreated(
+                session_id="child",
+                session_tags=("subagent",),
+                parent_session_id="parent",
+                metadata={"terminal_container_owner_session_id": "parent"},
+            )
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id="child",
+                tool="terminal",
+                input={"cmd": "pwd"},
+                run_id="tool-1",
+            )
+        )
+    )
+    asyncio.run(consumer.process_event(bus, request))
+    assert tool.calls[0].session.id == "child"
+    assert tool.calls[0].session.container_owner_id == "parent"
+    assert tool.calls[0].session.tags == ("project-a",)
+    assert tool._container_for(tool.calls[0]) == "shared-project"
+
+    # An unmapped owner still gets the owner's default name, not the child's.
+    tool.settings = Settings.from_env()
+    assert tool._container_for(
+        ToolCall(
+            session=ToolSession(id="child", container_owner_id="parent"),
+            name="terminal",
+            input={"cmd": "pwd"},
+        )
+    ) == "llm-harness-session-parent"

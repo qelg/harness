@@ -83,7 +83,8 @@ class PodmanShellTool:
         for tag in call.session.tags:
             if tag in self.settings.tag_container_map:
                 return self.settings.tag_container_map[tag]
-        return f"llm-harness-session-{call.session.id}"
+        owner_id = call.session.container_owner_id or call.session.id
+        return f"llm-harness-session-{owner_id}"
 
     async def _acquire_container(self, name: str) -> None:
         lock = self._container_locks.setdefault(name, asyncio.Lock())
@@ -190,8 +191,13 @@ class PodmanShellToolConsumer(EventConsumer):
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry=None) -> None:
         if await self._already_completed(bus, event):
             return
+        owner_id = _session_container_owner(bus, event.tags["session"])
         call = ToolCall(
-            session=ToolSession(id=event.tags["session"], tags=_session_user_tags(bus, event.tags["session"])),
+            session=ToolSession(
+                id=event.tags["session"],
+                tags=_session_user_tags(bus, owner_id),
+                container_owner_id=owner_id,
+            ),
             name=self.tool.name,
             input=event.payload.get("input", {}),
         )
@@ -270,11 +276,34 @@ def _failed_command_output(stdout: str, stderr: str, exit_code: int | None) -> s
     return "\n".join(parts) + "\n"
 
 
+def _session_container_owner(bus: EventBus, session_id: str) -> str:
+    """Resolve durable same-container pointers without trusting a cycle."""
+    current = session_id
+    seen: set[str] = set()
+    while current not in seen:
+        seen.add(current)
+        created = _session_created(bus, current)
+        if created is None:
+            break
+        metadata = created.payload.get("metadata")
+        owner = metadata.get("terminal_container_owner_session_id") if isinstance(metadata, dict) else None
+        if not isinstance(owner, str) or not owner or owner == current:
+            break
+        current = owner
+    return current
+
+
+def _session_created(bus: EventBus, session_id: str) -> EventRecord | None:
+    return bus.latest(
+        EventFilter(names=frozenset({"session.created"}), tags={"session": session_id})
+    )
+
+
 def _session_user_tags(bus: EventBus, session_id: str) -> tuple[str, ...]:
-    events = bus.replay(EventFilter(names=frozenset({"session.created"}), tags={"session": session_id}), limit=1)
-    if not events:
+    event = _session_created(bus, session_id)
+    if event is None:
         return ()
-    tags = events[0].payload.get("tags", [])
+    tags = event.payload.get("tags", [])
     if not isinstance(tags, list):
         return ()
     return tuple(tag for tag in tags if isinstance(tag, str))

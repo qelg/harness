@@ -150,6 +150,7 @@ def test_api_registers_builtin_tool_call_requester(tmp_path, monkeypatch):
     assert "terminal" in consumers
     assert "subagent" in consumers
     assert "subagent" in app.state.registry.tools
+    assert "subagent_state" in app.state.registry.tools
 
 
 def test_api_creates_message_event_and_lists_messages_from_events(tmp_path, monkeypatch):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from llm_harness.builtin_plugins.model_choice import model_choice_for
@@ -16,8 +17,16 @@ class ToolResultLlmRequesterPlugin(EventConsumer):
 
     def __init__(self, *, settings: Settings):
         self.settings = settings
+        # Parallel tool completions for one assistant must produce one and
+        # only one follow-up run.  Event acknowledgements are ordered, but
+        # callbacks are intentionally allowed to run concurrently.
+        self._mutation_lock = asyncio.Lock()
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
+        async with self._mutation_lock:
+            await self._process_event_locked(bus, event)
+
+    async def _process_event_locked(self, bus: EventBus, event: EventRecord) -> None:
         request = _event_by_id(bus, event.causation_id)
         if request is None or request.name != ToolCallRequested.name:
             return
@@ -33,7 +42,7 @@ class ToolResultLlmRequesterPlugin(EventConsumer):
         requests = _tool_requests_for_assistant(bus, assistant)
         if not requests:
             return
-        completed_request_ids = _completed_tool_request_ids(bus, assistant)
+        completed_request_ids = _completed_tool_request_ids(bus, requests)
         if any(tool_request.id not in completed_request_ids for tool_request in requests):
             return
 
@@ -86,15 +95,29 @@ def _tool_requests_for_assistant(bus: EventBus, assistant: EventRecord) -> list[
     return [request for request in requests if request.causation_id == assistant.id]
 
 
-def _completed_tool_request_ids(bus: EventBus, assistant: EventRecord) -> dict[int, int]:
+def _completed_tool_request_ids(
+    bus: EventBus, requests: list[EventRecord]
+) -> dict[int, int]:
+    """Return only results that exactly match a request from this assistant."""
+    if not requests:
+        return {}
+    expected = {request.id: request for request in requests}
+    session_id = requests[0].tags["session"]
     results = bus.replay(
         EventFilter(
             names=frozenset({ToolMessageCreated.name}),
-            tags={"session": assistant.tags["session"]},
+            tags={"session": session_id},
         )
     )
     completed: dict[int, int] = {}
     for result in results:
-        if result.causation_id is not None:
-            completed[result.causation_id] = result.id
+        request = expected.get(result.causation_id)
+        if request is None:
+            continue
+        if (
+            result.tags.get("tool") != request.tags.get("tool")
+            or result.tags.get("run") != request.tags.get("run")
+        ):
+            continue
+        completed[request.id] = result.id
     return completed

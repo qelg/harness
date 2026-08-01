@@ -77,16 +77,31 @@ mit `subagent` markierte Child-Session. Der Tool-Result bestaetigt den Start dir
 mit der neuen Session-ID. Sobald sowohl die Child-Session als auch ihre Parent-Session
 im Zustand `finished` sind, kopiert das Plugin die finale Antwort genau einmal mit
 dem Praefix `subagent response:` als neue User-Message in die Parent-Session.
-Ohne weitere Angabe verwendet die Child-Session Provider, Modell und Run-Optionen
-des aufrufenden Modells. Mit `model` kann das Modell optional ueberschrieben werden:
+Ohne weitere Angabe verwendet die Child-Session Provider, Modell, Thinking-Level,
+Toolsets und Reasoning-Summary des exakten aufrufenden Runs. `provider`, `model`
+und `thinking_level` (`none`, `low`, `medium`, `high`) koennen unabhaengig
+voneinander ueberschrieben werden. `same_container` ist standardmaessig `false`;
+bei `true` teilen Child und Parent den effektiv aufgeloesten Terminal-Container
+(auch ueber verschachtelte Subagents hinweg).
 
 ```json
 {"context":"Pruefe die Implementierung und berichte die wichtigsten Risiken."}
 ```
 
 ```json
-{"context":"Pruefe nur die Sicherheitsrisiken.","model":"specialist-model"}
+{"context":"Pruefe nur die Sicherheitsrisiken.","provider":"openrouter","model":"specialist-model","thinking_level":"high","same_container":true}
 ```
+
+Das eingebaute Tool `subagent_state` liest den aktuellen Zustand einer oder
+mehrerer Child-Sessions. Alle IDs muessen direkte Subagent-Kinder der aufrufenden
+Session sein. Ohne `wait_for` liefert es sofort eine deterministische JSON-Antwort;
+mit `wait_for: "any"` oder `"all"` bleibt der Tool-Aufruf bis zum passenden
+`session.state`-Event offen. Das Ergebnis hat die Form
+`{"states":[{"session_id":"...","state":"starting|running|finished|failed",...}]}`.
+Fertige Eintraege enthalten `result` mit dem finalen Assistant-Text, fehlgeschlagene
+Eintraege `error` mit dem Run-Fehler. Der normale Tool-Result-Fluss setzt danach
+die Parent-Session fort. Fuer Aufrufer ohne `subagent_state` bleibt das bisherige
+automatische `subagent response:`-Kopieren erhalten.
 
 ## Plugin-Schnittstelle
 
@@ -128,7 +143,7 @@ Direkt per Umgebung entspricht dies
 `terminal` startet Container nach Bedarf:
 
 - Ohne Mapping: ein Container pro Session.
-- Mit `HARNESS_TAG_CONTAINER_MAP=tag-a=name-a,tag-b=name-b`: Sessions mit diesem Tag nutzen den angegebenen Container.
+- Mit `HARNESS_TAG_CONTAINER_MAP=tag-a=name-a,tag-b=name-b`: Sessions mit diesem Tag nutzen den angegebenen Container. Bei `subagent` mit `same_container: true` werden dafuer die Tags und die effektive Owner-Session des Parents verwendet.
 - Image: `HARNESS_PODMAN_IMAGE`, Standard `docker.io/library/python:3.12-slim`.
 - Mit `HARNESS_PODMAN_MOUNT_NIX_STORE=1` wird `/nix/store` read-only in neue Tool-Container gemountet.
 
