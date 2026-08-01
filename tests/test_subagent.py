@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from llm_harness.config import Settings
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
@@ -239,6 +240,50 @@ def test_tool_request_starts_tagged_child_and_acknowledges_session_id(tmp_path):
     assert child_session_id in acknowledgements[0].payload["content"]
     assert acknowledgements[0].payload["metadata"]["subagent_session_id"] == child_session_id
     assert acknowledgements[0].causation_id == request.id
+
+
+def test_subagent_inserts_system_prompt_before_its_user_message(tmp_path, monkeypatch):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_dir = skills_dir / "test-skill"
+    skill_dir.mkdir()
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\nname: test-skill\ndescription: A skill.\n---\n\ninstructions"
+    )
+    monkeypatch.setenv("HARNESS_SKILLS", f'["{skills_dir}"]')
+
+    bus = EventService(tmp_path / "events.db")
+    plugin = SubagentPlugin(tool=SubagentTool(), settings=Settings.from_env())
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_parent")))
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id="sess_parent",
+                tool="subagent",
+                input={"context": "Inspect the parser."},
+                run_id="call_subagent_1",
+            )
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, request))
+
+    child_session_id = bus.replay(
+        EventFilter(
+            names=frozenset({SessionCreated.name}), tags={"parent_session": "sess_parent"}
+        )
+    )[0].tags["session"]
+    messages = bus.replay(
+        EventFilter(
+            names=frozenset({"chat.message.system.created", "chat.message.user.created"}),
+            tags={"session": child_session_id},
+        )
+    )
+    assert [message.name for message in messages] == [
+        "chat.message.system.created",
+        "chat.message.user.created",
+    ]
+    assert "test-skill" in messages[0].payload["content"]
 
 
 def test_response_waits_for_child_and_parent_to_finish_and_is_copied_once(tmp_path):

@@ -7,14 +7,15 @@ from typing import Any
 from llm_harness.config import Settings, Skill
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord, EventToAppend
-from llm_harness.core.types import SessionCreated, SystemMessageCreated, to_event_parts
+from llm_harness.core.types import SessionCreated, SystemMessageCreated, UserMessageCreated, to_event_parts
 
 
 class SystemPromptPlugin(EventConsumer):
-    """Inject a system message with skill information when a session is created.
+    """Inject a system message only while a new session has no user message.
 
-    The system message is created before any user messages, which gives the LLM
-    early awareness of available skills and improves prompt-cache routing.
+    This consumer is asynchronous, so direct session writers can add a user
+    message before it handles ``SessionCreated``.  Do not add a system message
+    after that user message; creators that need one must append it themselves.
     """
 
     name = "system-prompt"
@@ -25,7 +26,7 @@ class SystemPromptPlugin(EventConsumer):
         self.settings = settings
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
-        if self._already_injected(bus, event):
+        if self._has_system_or_user_message(bus, event):
             return
 
         system_prompt = build_system_prompt(self.settings.skills)
@@ -47,11 +48,11 @@ class SystemPromptPlugin(EventConsumer):
             correlation_id=event.correlation_id or event.id,
         )
 
-    def _already_injected(self, bus: EventBus, event: EventRecord) -> bool:
+    def _has_system_or_user_message(self, bus: EventBus, event: EventRecord) -> bool:
         return bool(
             bus.replay(
                 EventFilter(
-                    names=frozenset({SystemMessageCreated.name}),
+                    names=frozenset({SystemMessageCreated.name, UserMessageCreated.name}),
                     tags={"session": event.tags["session"]},
                 ),
                 limit=1,

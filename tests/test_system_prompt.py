@@ -37,6 +37,31 @@ def test_system_prompt_injected_on_session_creation(tmp_path, monkeypatch):
     assert "skill_view" in content
 
 
+def test_system_prompt_is_not_injected_after_a_user_message(tmp_path, monkeypatch):
+    """Delayed session handling must not place a system prompt after a user message."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_dir = skills_dir / "test-skill"
+    skill_dir.mkdir()
+    skill_dir.joinpath("SKILL.md").write_text(
+        "---\nname: test-skill\ndescription: A skill.\n---\n\ninstructions"
+    )
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    monkeypatch.setenv("HARNESS_SKILLS", f'["{skills_dir}"]')
+    bus = EventService(tmp_path / "events.db")
+    plugin = SystemPromptPlugin(settings=Settings.from_env())
+
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
+    asyncio.run(bus.append_message(UserMessageCreated(session_id="sess_1", content="hello")))
+    asyncio.run(plugin.process_pending(bus))
+
+    system_messages = bus.replay(
+        EventFilter(names=frozenset({"chat.message.system.created"}), tags={"session": "sess_1"})
+    )
+    assert system_messages == []
+
+
 def test_system_prompt_comes_before_user_message(tmp_path, monkeypatch):
     """The system message is created on session creation, before any user message.
 
