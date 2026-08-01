@@ -4,6 +4,7 @@ from llm_harness.api_plugin import HarnessApiPlugin
 from llm_harness.config import Settings
 from llm_harness.auth_plugins.chatgpt_oauth import ChatGPTOAuthPlugin
 from llm_harness.auth_plugins.openai_codex_device import OpenAICodexDeviceAuthPlugin
+from llm_harness.builtin_plugins.container_cleanup import ContainerCleanupPlugin, PodmanContainerManager
 from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
 from llm_harness.builtin_plugins.namer import NamerPlugin
@@ -49,6 +50,9 @@ def register(registry, *, bus=None) -> None:
     terminal = PodmanShellTool(settings=settings)
     registry.add_tool(terminal)
     registry.add_event_consumer_plugin(PodmanShellToolConsumer(tool=terminal))
+    containers = ContainerCleanupPlugin(manager=PodmanContainerManager())
+    registry.add_api_plugin(containers)
+    registry.add_event_consumer_plugin(containers)
     skill_view = SkillViewTool(settings=settings)
     registry.add_tool(skill_view)
     registry.add_event_consumer_plugin(SkillViewToolConsumer(tool=skill_view))
