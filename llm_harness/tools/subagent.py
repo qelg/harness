@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from llm_harness.builtin_plugins.model_choice import ModelChoice, model_choice_for
+from llm_harness.builtin_plugins.system_prompt import build_system_prompt
 from llm_harness.config import Settings
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord, EventToAppend
@@ -15,6 +16,7 @@ from llm_harness.core.types import (
     ModelSelected,
     SessionCreated,
     SessionStateChanged,
+    SystemMessageCreated,
     ToolCall,
     ToolCallRequested,
     ToolMessageCreated,
@@ -249,6 +251,7 @@ class SubagentPlugin(EventConsumer):
                 bus, parent_session_id
             )
         correlation_id = event.correlation_id or event.id
+        system_prompt = build_system_prompt(self.settings.skills)
         messages = (
             SessionCreated(
                 session_id=child_session_id,
@@ -269,6 +272,11 @@ class SubagentPlugin(EventConsumer):
                     "parent_session_id": parent_session_id,
                     "tool_request_event_id": event.id,
                 },
+            ),
+            *(
+                (SystemMessageCreated(session_id=child_session_id, content=system_prompt),)
+                if system_prompt
+                else ()
             ),
             UserMessageCreated(
                 session_id=child_session_id,
