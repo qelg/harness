@@ -28,11 +28,13 @@ class Container:
     name: str
     size_bytes: int
     session_ids: tuple[str, ...]
+    session_title: str | None
 
     def api_value(self) -> dict[str, Any]:
         return {"container_id": self.id, "name": self.name, "size_bytes": self.size_bytes,
                 "session_ids": list(self.session_ids),
-                "session_id": self.name.removeprefix(_CONTAINER_PREFIX)}
+                "session_id": self.name.removeprefix(_CONTAINER_PREFIX),
+                "session_title": self.session_title}
 
 
 class PodmanContainerManager:
@@ -59,8 +61,11 @@ class PodmanContainerManager:
             if not name.startswith(_CONTAINER_PREFIX):
                 continue
             container_id = str(row.get("Id") or row.get("ID") or row.get("Id") or name)
-            containers.append(Container(container_id, name, _size_bytes(row.get("Size")),
-                                        tuple(sorted(owners.get(name, ()) ))))
+            session_id = name.removeprefix(_CONTAINER_PREFIX)
+            containers.append(Container(
+                container_id, name, _size_bytes(row.get("Size")),
+                tuple(sorted(owners.get(name, ()) )), _session_title(bus, session_id),
+            ))
         return sorted(containers, key=lambda container: (-container.size_bytes, container.name))
 
     async def delete(self, container: Container) -> int:
@@ -132,7 +137,15 @@ def _container_name(row: dict[str, Any]) -> str:
 
 
 def _size_bytes(value: Any) -> int:
-    # podman reports e.g. "1.2MB (virtual 123MB)"; the first value is writable disk use.
+    # Modern Podman JSON represents sizes exactly as {"rwSize": ..., "rootFsSize": ...}.
+    # rwSize is the reclaimable writable layer; rootFsSize includes the shared image.
+    if isinstance(value, dict):
+        rw_size = value.get("rwSize")
+        if isinstance(rw_size, int) and rw_size >= 0:
+            return rw_size
+        if isinstance(rw_size, float) and rw_size >= 0:
+            return int(rw_size)
+    # Older Podman releases report e.g. "1.2MB (virtual 123MB)".
     match = _SIZE_RE.match(str(value or ""))
     if match is None:
         return 0
@@ -175,3 +188,11 @@ def _descendant_sessions(bus: EventBus, root: str) -> set[str]:
                 result.add(child)
                 pending.append(child)
     return result
+
+
+def _session_title(bus: EventBus, session_id: str) -> str | None:
+    event = bus.latest(EventFilter(names=frozenset({SessionCreated.name}), tags={"session": session_id}))
+    if event is None:
+        return None
+    title = event.payload.get("title")
+    return title if isinstance(title, str) and title.strip() else None
