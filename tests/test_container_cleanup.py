@@ -16,10 +16,10 @@ class Process:
 
 def test_lists_only_session_terminal_containers_and_associates_shared_owner(tmp_path, monkeypatch):
     bus = EventService(tmp_path / "events.db")
-    asyncio.run(bus.append_message(SessionCreated(session_id="parent")))
+    asyncio.run(bus.append_message(SessionCreated(session_id="parent", title="Parent session")))
     asyncio.run(bus.append_message(SessionCreated(session_id="child", parent_session_id="parent", metadata={"terminal_container_owner_session_id": "parent"})))
     payload = json.dumps([
-        {"Id": "abc", "Names": ["llm-harness-session-parent"], "Size": "1.5MB (virtual 99MB)"},
+        {"Id": "abc", "Names": ["llm-harness-session-parent"], "Size": {"rootFsSize": 99_000_000, "rwSize": 1_500_123}},
         {"Id": "other", "Names": ["unrelated"], "Size": "9GB (virtual 9GB)"},
     ]).encode()
 
@@ -32,7 +32,8 @@ def test_lists_only_session_terminal_containers_and_associates_shared_owner(tmp_
     containers = asyncio.run(PodmanContainerManager().containers(bus))
     assert len(containers) == 1
     assert containers[0].id == "abc"
-    assert containers[0].size_bytes == 1_500_000
+    assert containers[0].size_bytes == 1_500_123
+    assert containers[0].api_value()["session_title"] == "Parent session"
     assert containers[0].session_ids == ("child", "parent")
 
 
