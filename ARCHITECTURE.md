@@ -106,6 +106,28 @@ Wenn waehrend des Provider-Streams ein Fehler auftritt, schreibt der Provider-Ru
 
 Die API gibt nur `accepted` und das `tool.call.requested` Event zurueck. Ergebnisse kommen ueber `GET /messages` oder den Event-Stream.
 
+## Eingebaute Tools: subagent und subagent_state
+
+`subagent` schreibt Child-Erzeugung, Modellwahl und die sofortige Startbestaetigung
+in einem Event-Batch. Provider, Modell und Thinking-Level koennen unabhaengig
+ueberschrieben werden; Toolsets und `reasoning_summary` stammen aus dem exakten
+aufrufenden `llm.run.requested`-Event. `same_container` speichert den effektiv
+aufgeloesten Container-Owner als Metadatum im `session.created`-Event. Dadurch
+kann der Terminal-Consumer den Owner ueber Neustarts und verschachtelte Children
+sicher und zyklusbegrenzt aufloesen. Ohne dieses Flag bleibt die Container-Isolation
+pro Session unveraendert.
+
+`subagent_state` validiert die angeforderten IDs gegen die direkten Child-Sessions
+der aufrufenden Session. Es liefert deterministisches JSON mit `starting`,
+`running`, `finished` oder `failed`; fertige Antworten und Run-Fehler werden aus
+den dauerhaften Events gelesen. Ein `wait_for`-Aufruf ohne erfuellte Bedingung
+schreibt noch kein Tool-Ergebnis. Offene Anforderungen werden aus der Event-Historie
+erneut aufgebaut und bei passenden `session.state`-Events geprueft. Ein erfuelltes
+Ergebnis ist ein normales `chat.message.tool.created` und wird daher vom
+`ToolResultLlmRequesterPlugin` fortgesetzt. Seine terminalen Child-IDs markieren
+den Legacy-`subagent response:`-Pfad als bereits zugestellt; bei `any` bleiben
+nicht gelieferte Children weiter fuer den Legacy-Pfad sichtbar.
+
 ## Plugin-Modell
 
 Plugins sind Python-Pakete mit Entry Points in der Gruppe `llm_harness.plugins`:
@@ -404,7 +426,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_provider
 
 | Typ | Ausloeser | Payload |
 | --- | --- | --- |
-| `session.created` | Neue Session wurde erzeugt. | `{"title": ..., "tags": [...]}` |
+| `session.created` | Neue Session wurde erzeugt. | `{"title": ..., "tags": [...], "metadata": {...}}` |
 | `chat.message.user.created` | User-Message wurde geschrieben. | `{"content": ..., "metadata": {...}}` |
 | `llm.run.requested` | LLM-Lauf wurde fuer eine User-Message angefordert. | `{"provider": ..., "model": ..., "run_id": ...}` |
 | `llm.run.started` | Provider-Aufruf beginnt. | `{"provider": ..., "model": ..., "run_id": ...}` |
@@ -412,6 +434,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_provider
 | `chat.message.assistant.created` | Assistant-Message wurde final gespeichert. | `{"content": ..., "provider": ..., "model": ..., "run_id": ...}` |
 | `tool.call.requested` | API oder Plugin fordert Tool-Ausfuehrung an. | `{"tool": ..., "input": {...}, "run_id": ...}` |
 | `chat.message.tool.created` | Tool-Output wurde als Message geschrieben. | `{"content": ..., "tool": ..., "run_id": ...}` |
+| `subagent_state` (Tool) | Liest Child-Zustaende oder wartet ereignisgetrieben. | `{"session_ids": [...], "wait_for": "any|all"}` |
 
 Provider-Streaming-Events:
 

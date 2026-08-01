@@ -45,6 +45,9 @@ class Message:
 class ToolSession:
     id: str
     tags: tuple[str, ...] = ()
+    # The session whose terminal container should be used.  This is kept
+    # separate from ``id`` so tool results and logs still refer to the caller.
+    container_owner_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,11 +95,14 @@ class SessionCreated:
     session_tags: tuple[str, ...] = ()
     parent_session_id: str | None = None
     namer: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     name: str = "session.created"
 
     def payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"title": self.title, "tags": list(self.session_tags)}
+        if self.metadata:
+            payload["metadata"] = self.metadata
         if self.parent_session_id is not None:
             payload["parent_session"] = self.parent_session_id
         return payload

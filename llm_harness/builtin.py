@@ -19,7 +19,7 @@ from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
 from llm_harness.toolsets import DefaultToolSet
 from llm_harness.tools.podman_shell import PodmanShellTool, PodmanShellToolConsumer
 from llm_harness.tools.skill_view import SkillViewTool, SkillViewToolConsumer
-from llm_harness.tools.subagent import SubagentPlugin, SubagentTool
+from llm_harness.tools.subagent import SubagentPlugin, SubagentStateTool, SubagentTool
 
 
 def register(registry, *, bus=None) -> None:
@@ -53,8 +53,12 @@ def register(registry, *, bus=None) -> None:
     registry.add_tool(skill_view)
     registry.add_event_consumer_plugin(SkillViewToolConsumer(tool=skill_view))
     subagent = SubagentTool()
+    subagent_state = SubagentStateTool()
     registry.add_tool(subagent)
-    registry.add_event_consumer_plugin(SubagentPlugin(tool=subagent, settings=settings))
+    registry.add_tool(subagent_state)
+    registry.add_event_consumer_plugin(
+        SubagentPlugin(tool=subagent, state_tool=subagent_state, settings=settings)
+    )
     registry.add_toolset(DefaultToolSet())
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
