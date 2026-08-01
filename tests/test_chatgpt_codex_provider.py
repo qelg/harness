@@ -104,6 +104,9 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
 
     with caplog.at_level(logging.INFO, logger="llm_harness.providers.chatgpt_codex"):
         assert asyncio.run(consume()) == ["hi"]
+    assert "chatgpt-codex request body" in caplog.text
+    assert '"input": [{"content": "hello", "role": "user"}]' in caplog.text
+    assert '"prompt_cache_key": "shared-harness"' in caplog.text
     assert "chatgpt-codex event" in caplog.text
     assert "response.output_text.delta" in caplog.text
 
