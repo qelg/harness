@@ -31,6 +31,7 @@ SUBAGENT_SESSION_TAG = "subagent"
 SUBAGENT_RESPONSE_PREFIX = "subagent response:"
 THINKING_LEVELS = ("none", "low", "medium", "high")
 WAIT_MODES = ("any", "all")
+RECURSIVE_SUBAGENT_LIMIT = "recursive_subagent_limit"
 
 
 class SubagentTool:
@@ -41,7 +42,8 @@ class SubagentTool:
         "Start a subagent in a child session. The tool returns the new session ID immediately; "
         "after both sessions finish, the subagent's final response is sent back to this session. "
         "By default provider, model, thinking level, toolsets, and reasoning summary are inherited "
-        "from the calling run. Provider, model, thinking_level, and same_container can be overridden."
+        "from the calling run. Provider, model, thinking_level, and same_container can be overridden. "
+        "Child sessions cannot start subagents unless recursive_subagent_limit is supplied."
     )
     input_schema = {
         "type": "object",
@@ -71,6 +73,11 @@ class SubagentTool:
                 "default": False,
                 "description": "Use the calling session's effective terminal container.",
             },
+            RECURSIVE_SUBAGENT_LIMIT: {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Number of further subagent levels this child may create.",
+            },
         },
         "required": ["context"],
         "additionalProperties": False,
@@ -78,7 +85,8 @@ class SubagentTool:
 
     async def run(self, call: ToolCall) -> ToolResult:
         if not isinstance(call.input, dict) or set(call.input) - {
-            "context", "provider", "model", "thinking_level", "same_container"
+            "context", "provider", "model", "thinking_level", "same_container",
+            RECURSIVE_SUBAGENT_LIMIT,
         }:
             raise ValueError("tool input contains unknown fields")
         context = call.input.get("context")
@@ -109,6 +117,16 @@ class SubagentTool:
             raise ValueError("tool input field 'same_container' must be a boolean")
         if same_container:
             metadata["same_container"] = True
+
+        recursive_limit = call.input.get(RECURSIVE_SUBAGENT_LIMIT)
+        if RECURSIVE_SUBAGENT_LIMIT in call.input and (
+            type(recursive_limit) is not int or recursive_limit < 1
+        ):
+            raise ValueError(
+                f"tool input field '{RECURSIVE_SUBAGENT_LIMIT}' must be a positive integer"
+            )
+        if recursive_limit is not None:
+            metadata[RECURSIVE_SUBAGENT_LIMIT] = recursive_limit
 
         return ToolResult(output=context, metadata=metadata)
 
@@ -223,6 +241,20 @@ class SubagentPlugin(EventConsumer):
             input=event.payload.get("input", {}),
         )
         validated = await self.tool.run(call)
+        parent_session_id = event.tags["session"]
+        parent_limit = _recursive_subagent_limit(bus, parent_session_id)
+        if _is_recursive_subagent_session(bus, parent_session_id):
+            if parent_limit < 1:
+                raise ValueError(
+                    "subagent sessions cannot start subagents without recursive_subagent_limit"
+                )
+            if RECURSIVE_SUBAGENT_LIMIT in validated.metadata:
+                raise ValueError(
+                    "recursive_subagent_limit may only be set when starting a non-subagent session"
+                )
+            child_limit = parent_limit - 1
+        else:
+            child_limit = validated.metadata.get(RECURSIVE_SUBAGENT_LIMIT, 0)
         choice = _model_choice_for_request(bus, event, settings=self.settings)
         for field in ("provider", "model"):
             configured = validated.metadata.get(field)
@@ -244,8 +276,7 @@ class SubagentPlugin(EventConsumer):
             )
 
         child_session_id = new_session_id()
-        parent_session_id = event.tags["session"]
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = {RECURSIVE_SUBAGENT_LIMIT: child_limit}
         if validated.metadata.get("same_container") is True:
             metadata["terminal_container_owner_session_id"] = _container_owner_session_id(
                 bus, parent_session_id
@@ -271,6 +302,7 @@ class SubagentPlugin(EventConsumer):
                     "subagent": True,
                     "parent_session_id": parent_session_id,
                     "tool_request_event_id": event.id,
+                    RECURSIVE_SUBAGENT_LIMIT: child_limit,
                 },
             ),
             *(
@@ -470,6 +502,30 @@ def _model_choice_for_request(
         thinking_level=payload.get("thinking_level"),
         reasoning_summary=bool(payload.get("reasoning_summary", False)),
     )
+
+
+def _is_recursive_subagent_session(bus: EventBus, session_id: str) -> bool:
+    return bool(bus.replay(
+        EventFilter(
+            names=frozenset({SessionCreated.name}),
+            tags={"session": session_id, f"session_tag:{SUBAGENT_SESSION_TAG}": "true"},
+        ),
+        limit=1,
+    ))
+
+
+def _recursive_subagent_limit(bus: EventBus, session_id: str) -> int:
+    session = bus.replay(
+        EventFilter(names=frozenset({SessionCreated.name}), tags={"session": session_id}),
+        limit=1,
+    )
+    if not session:
+        return 0
+    metadata = session[0].payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return 0
+    limit = metadata.get(RECURSIVE_SUBAGENT_LIMIT)
+    return limit if type(limit) is int and limit >= 0 else 0
 
 
 def _validated_session_ids(input_: Any) -> list[str]:

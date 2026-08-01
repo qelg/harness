@@ -54,6 +54,28 @@ def test_subagent_tool_requires_context():
     )
     assert configured.metadata == {"model": "specialist-model"}
 
+    recursive = asyncio.run(
+        tool.run(
+            ToolCall(
+                session=ToolSession(id="sess_parent"),
+                name="subagent",
+                input={"context": "Investigate", "recursive_subagent_limit": 2},
+            )
+        )
+    )
+    assert recursive.metadata == {"recursive_subagent_limit": 2}
+
+    with pytest.raises(ValueError, match="positive integer"):
+        asyncio.run(
+            tool.run(
+                ToolCall(
+                    session=ToolSession(id="sess_parent"),
+                    name="subagent",
+                    input={"context": "Investigate", "recursive_subagent_limit": True},
+                )
+            )
+        )
+
     with pytest.raises(ValueError, match="non-empty string field 'context'"):
         asyncio.run(
             tool.run(
@@ -214,6 +236,7 @@ def test_tool_request_starts_tagged_child_and_acknowledges_session_id(tmp_path):
         "title": "subagent",
         "tags": ["subagent"],
         "parent_session": "sess_parent",
+        "metadata": {"recursive_subagent_limit": 0},
     }
     assert child.tags["session_tag:subagent"] == "true"
     assert child.producer == "subagent"
@@ -240,6 +263,58 @@ def test_tool_request_starts_tagged_child_and_acknowledges_session_id(tmp_path):
     assert child_session_id in acknowledgements[0].payload["content"]
     assert acknowledgements[0].payload["metadata"]["subagent_session_id"] == child_session_id
     assert acknowledgements[0].causation_id == request.id
+
+
+def test_subagent_limit_allows_only_the_requested_recursive_depth(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = SubagentPlugin(tool=SubagentTool())
+    asyncio.run(bus.append_message(SessionCreated(session_id="root")))
+
+    def start(parent_session_id, input_, run_id):
+        request = asyncio.run(
+            bus.append_message(
+                ToolCallRequested(
+                    session_id=parent_session_id,
+                    tool="subagent",
+                    input=input_,
+                    run_id=run_id,
+                )
+            )
+        )
+        asyncio.run(plugin.process_event(bus, request))
+        return bus.replay(
+            EventFilter(
+                names=frozenset({SessionCreated.name}),
+                tags={"parent_session": parent_session_id},
+            )
+        )[-1].tags["session"]
+
+    child = start("root", {"context": "delegate", "recursive_subagent_limit": 2}, "one")
+    grandchild = start(child, {"context": "delegate again"}, "two")
+    great_grandchild = start(grandchild, {"context": "one final delegation"}, "three")
+
+    assert _session_metadata(bus, child)["recursive_subagent_limit"] == 2
+    assert _session_metadata(bus, grandchild)["recursive_subagent_limit"] == 1
+    assert _session_metadata(bus, great_grandchild)["recursive_subagent_limit"] == 0
+
+    blocked = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id=great_grandchild,
+                tool="subagent",
+                input={"context": "must not start"},
+                run_id="four",
+            )
+        )
+    )
+    with pytest.raises(ValueError, match="cannot start subagents"):
+        asyncio.run(plugin.process_event(bus, blocked))
+
+
+def _session_metadata(bus, session_id):
+    return bus.replay(
+        EventFilter(names=frozenset({SessionCreated.name}), tags={"session": session_id}), limit=1
+    )[0].payload["metadata"]
 
 
 def test_subagent_inserts_system_prompt_before_its_user_message(tmp_path, monkeypatch):

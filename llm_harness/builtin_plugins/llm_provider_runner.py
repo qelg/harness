@@ -15,6 +15,7 @@ from llm_harness.core.types import (
     ProviderStreamEvent,
     Role,
     ToolSpec,
+    SessionCreated,
 )
 
 
@@ -50,7 +51,9 @@ class LlmProviderRunnerPlugin(EventConsumer):
             return
 
         try:
-            tools = _tools_for_toolsets(registry, toolsets)
+            tools = _tools_for_toolsets(
+                registry, toolsets, allow_subagents=_session_allows_subagents(bus, session_id)
+            )
         except ValueError as exc:
             await self._fail(
                 bus,
@@ -228,7 +231,9 @@ async def _stream_provider_response(
     yield ProviderStreamEvent(type="completed", response=None)
 
 
-def _tools_for_toolsets(registry: Any, toolsets: tuple[str, ...]) -> list[ToolSpec]:
+def _tools_for_toolsets(
+    registry: Any, toolsets: tuple[str, ...], *, allow_subagents: bool = True
+) -> list[ToolSpec]:
     if registry is None:
         return []
 
@@ -239,8 +244,25 @@ def _tools_for_toolsets(registry: Any, toolsets: tuple[str, ...]) -> list[ToolSp
         if toolset is None:
             raise ValueError(f"unknown toolset: {toolset_name}")
         for tool in toolset.tools(registry=registry):
+            if not allow_subagents and tool.name == "subagent":
+                continue
             if tool.name in seen:
                 continue
             seen.add(tool.name)
             tools.append(tool)
     return tools
+
+
+def _session_allows_subagents(bus: EventBus, session_id: str) -> bool:
+    session = bus.replay(
+        EventFilter(names=frozenset({SessionCreated.name}), tags={"session": session_id}),
+        limit=1,
+    )
+    if not session or session[0].tags.get("session_tag:subagent") != "true":
+        return True
+    metadata = session[0].payload.get("metadata")
+    return (
+        isinstance(metadata, dict)
+        and type(metadata.get("recursive_subagent_limit")) is int
+        and metadata["recursive_subagent_limit"] > 0
+    )
