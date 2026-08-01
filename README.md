@@ -370,8 +370,9 @@ Im NixOS-Modul entsprechen dem `services.llm-harness.namerProvider` und
 The built-in `unifiedpush` event-consumer sends a notification when a top-level
 session changes to `finished`. Derived sessions (sessions with a
 `parent_session`) and subsequent read/archive state events do not trigger a
-notification. The JSON sent to the distributor endpoint contains the session
-id, current session title, and final assistant message. Delivery is recorded per
+notification. Each notification is encrypted for the Android client before it is sent to the
+distributor. The distributor receives an ephemeral P-256 public key, nonce, and
+AES-GCM ciphertext—not the session id, title, or final assistant message. Delivery is recorded per
 event and subscription so retrying the persistent consumer does not duplicate a
 successful push; endpoints returning 404 or 410 are removed.
 
@@ -382,10 +383,10 @@ distributor with:
 PUT /push/unifiedpush/subscriptions
 content-type: application/json
 
-{"instance_id":"stable-device-id","endpoint":"https://push.example/secret"}
+{"instance_id":"stable-device-id","endpoint":"https://push.example/secret","public_key":"base64url-P-256-SPKI"}
 ```
 
-They unregister it with
+The `public_key` is the Android app’s P-256 SubjectPublicKeyInfo encoding; its matching non-exportable private key remains in Android Keystore. They unregister it with
 `DELETE /push/unifiedpush/subscriptions/{instance_id}`. Only public HTTPS
 endpoints are accepted. These routes should be protected by the same access
 control as the rest of the Harness API because a UnifiedPush endpoint is a

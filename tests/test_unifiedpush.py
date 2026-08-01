@@ -4,10 +4,18 @@ import asyncio
 import json
 
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastapi.testclient import TestClient
 
 from llm_harness.api import create_app
-from llm_harness.builtin_plugins.unifiedpush import UnifiedPushPlugin
+from llm_harness.builtin_plugins.unifiedpush import (
+    PUSH_CRYPTO_VERSION,
+    UnifiedPushPlugin,
+    _b64decode,
+)
 from llm_harness.core.events import EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
@@ -18,14 +26,29 @@ from llm_harness.core.types import (
 )
 
 
+def public_key() -> tuple[ec.EllipticCurvePrivateKey, str]:
+    private = ec.generate_private_key(ec.SECP256R1())
+    encoded = __import__("base64").urlsafe_b64encode(
+        private.public_key().public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    ).rstrip(b"=").decode()
+    return private, encoded
+
+
 def test_subscription_api_persists_and_validates_endpoints(tmp_path, monkeypatch):
     monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
     app = create_app()
     client = TestClient(app)
+    _, key = public_key()
 
     response = client.put(
         "/push/unifiedpush/subscriptions",
-        json={"instance_id": "phone-1", "endpoint": "https://push.example.test/abc"},
+        json={
+            "instance_id": "phone-1",
+            "endpoint": "https://push.example.test/abc",
+            "public_key": key,
+        },
     )
     assert response.status_code == 204
     assert app.state.bus.conn.execute(
@@ -34,7 +57,19 @@ def test_subscription_api_persists_and_validates_endpoints(tmp_path, monkeypatch
 
     assert client.put(
         "/push/unifiedpush/subscriptions",
-        json={"instance_id": "phone-1", "endpoint": "http://127.0.0.1/internal"},
+        json={
+            "instance_id": "phone-1",
+            "endpoint": "http://127.0.0.1/internal",
+            "public_key": key,
+        },
+    ).status_code == 400
+    assert client.put(
+        "/push/unifiedpush/subscriptions",
+        json={
+            "instance_id": "phone-1",
+            "endpoint": "https://push.example.test/abc",
+            "public_key": "not-a-key",
+        },
     ).status_code == 400
     assert client.delete("/push/unifiedpush/subscriptions/phone-1").status_code == 204
 
@@ -64,9 +99,10 @@ def test_finished_top_level_session_sends_title_message_and_session_id(tmp_path)
         )
     )
     UnifiedPushPlugin._init_schema(bus)
+    private, key = public_key()
     bus.conn.execute(
-        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?)",
-        ("phone", "https://push.example.test/token", 1),
+        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?, ?)",
+        ("phone", "https://push.example.test/token", key, 1),
     )
     requests = []
 
@@ -81,7 +117,16 @@ def test_finished_top_level_session_sends_title_message_and_session_id(tmp_path)
     asyncio.run(client.aclose())
 
     assert len(requests) == 1
-    assert json.loads(requests[0].content) == {
+    envelope = json.loads(requests[0].content)
+    assert envelope["version"] == PUSH_CRYPTO_VERSION
+    ephemeral = serialization.load_der_public_key(_b64decode(envelope["ephemeral_public_key"]))
+    shared_secret = private.exchange(ec.ECDH(), ephemeral)
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"harness-unifiedpush-v1").derive(shared_secret)
+    assert json.loads(
+        AESGCM(key).decrypt(
+            _b64decode(envelope["nonce"]), _b64decode(envelope["ciphertext"]), b"phone"
+        )
+    ) == {
         "type": "session.finished",
         "session_id": "sess_1",
         "title": "Release status",
@@ -106,9 +151,10 @@ def test_child_and_repeated_finished_states_do_not_notify(tmp_path):
         bus.append_message(SessionStateChanged("child", "finished", source.id, read="unread"))
     )
     UnifiedPushPlugin._init_schema(bus)
+    _, key = public_key()
     bus.conn.execute(
-        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?)",
-        ("phone", "https://push.example.test/token", 1),
+        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?, ?)",
+        ("phone", "https://push.example.test/token", key, 1),
     )
 
     def fail_if_called(request: httpx.Request) -> httpx.Response:

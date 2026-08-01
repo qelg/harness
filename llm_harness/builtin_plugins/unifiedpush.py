@@ -4,10 +4,16 @@ import asyncio
 import ipaddress
 import json
 import logging
+import os
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
@@ -28,6 +34,7 @@ logger = logging.getLogger(__name__)
 class UnifiedPushSubscription(BaseModel):
     instance_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
     endpoint: str = Field(min_length=1, max_length=4096)
+    public_key: str = Field(min_length=1, max_length=1024)
 
 
 class UnifiedPushPlugin(EventConsumer):
@@ -60,16 +67,18 @@ class UnifiedPushPlugin(EventConsumer):
         @app.put("/push/unifiedpush/subscriptions", status_code=204)
         async def subscribe(request: UnifiedPushSubscription) -> None:
             _validate_endpoint(request.endpoint)
+            _validate_public_key(request.public_key)
             with bus.conn:
                 bus.conn.execute(
                     """
-                    INSERT INTO unifiedpush_subscriptions(instance_id, endpoint, updated_at_ms)
-                    VALUES (?, ?, ?)
+                    INSERT INTO unifiedpush_subscriptions(instance_id, endpoint, public_key, updated_at_ms)
+                    VALUES (?, ?, ?, ?)
                     ON CONFLICT(instance_id) DO UPDATE SET
                       endpoint = excluded.endpoint,
+                      public_key = excluded.public_key,
                       updated_at_ms = excluded.updated_at_ms
                     """,
-                    (request.instance_id, request.endpoint, _now_ms()),
+                    (request.instance_id, request.endpoint, request.public_key, _now_ms()),
                 )
 
         @app.delete("/push/unifiedpush/subscriptions/{instance_id}", status_code=204)
@@ -103,9 +112,9 @@ class UnifiedPushPlugin(EventConsumer):
             "content": _bounded_text(_notification_content(source), 3000),
             "event_id": event.id,
         }
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        plaintext = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
         subscriptions = bus.conn.execute(
-            "SELECT instance_id, endpoint FROM unifiedpush_subscriptions ORDER BY instance_id"
+            "SELECT instance_id, endpoint, public_key FROM unifiedpush_subscriptions ORDER BY instance_id"
         ).fetchall()
         delivered = {
             row["instance_id"]
@@ -122,6 +131,9 @@ class UnifiedPushPlugin(EventConsumer):
                 instance_id = subscription["instance_id"]
                 if instance_id in delivered:
                     continue
+                body = _encrypt_payload(
+                    plaintext, subscription["public_key"], instance_id
+                )
                 response = await client.post(
                     subscription["endpoint"],
                     content=body,
@@ -160,6 +172,7 @@ class UnifiedPushPlugin(EventConsumer):
                 CREATE TABLE IF NOT EXISTS unifiedpush_subscriptions (
                   instance_id TEXT PRIMARY KEY,
                   endpoint TEXT NOT NULL,
+                  public_key TEXT,
                   updated_at_ms INTEGER NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS unifiedpush_deliveries (
@@ -169,6 +182,14 @@ class UnifiedPushPlugin(EventConsumer):
                 );
                 """
             )
+            columns = {
+                row["name"] for row in bus.conn.execute("PRAGMA table_info(unifiedpush_subscriptions)")
+            }
+            if "public_key" not in columns:
+                bus.conn.execute("ALTER TABLE unifiedpush_subscriptions ADD COLUMN public_key TEXT")
+                # Never fall back to plaintext for subscriptions created by an
+                # older client. The current Android app re-registers its endpoint.
+                bus.conn.execute("DELETE FROM unifiedpush_subscriptions WHERE public_key IS NULL")
 
 
 def _validate_endpoint(endpoint: str) -> None:
@@ -261,6 +282,54 @@ def _bounded_text(value: str, max_bytes: int) -> str:
     suffix = "…"
     prefix = encoded[: max_bytes - len(suffix.encode("utf-8"))]
     return prefix.decode("utf-8", errors="ignore") + suffix
+
+
+PUSH_CRYPTO_VERSION = "P-256-HKDF-SHA256-AES-256-GCM"
+_PUSH_CRYPTO_INFO = b"harness-unifiedpush-v1"
+
+
+def _b64encode(value: bytes) -> str:
+    return urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(value: str) -> bytes:
+    return urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _validate_public_key(value: str) -> None:
+    try:
+        key = serialization.load_der_public_key(_b64decode(value))
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail="invalid UnifiedPush public key") from error
+    if not isinstance(key, ec.EllipticCurvePublicKey) or not isinstance(key.curve, ec.SECP256R1):
+        raise HTTPException(status_code=400, detail="UnifiedPush public key must use P-256")
+
+
+def _encrypt_payload(plaintext: bytes, encoded_public_key: str, instance_id: str) -> bytes:
+    # The distributor receives only this authenticated envelope. The long-lived
+    # recipient private key is generated in AndroidKeyStore and never leaves the app.
+    recipient = serialization.load_der_public_key(_b64decode(encoded_public_key))
+    if not isinstance(recipient, ec.EllipticCurvePublicKey) or not isinstance(
+        recipient.curve, ec.SECP256R1
+    ):
+        raise ValueError("stored UnifiedPush public key is not P-256")
+    ephemeral = ec.generate_private_key(ec.SECP256R1())
+    shared_secret = ephemeral.exchange(ec.ECDH(), recipient)
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=_PUSH_CRYPTO_INFO).derive(
+        shared_secret
+    )
+    nonce = os.urandom(12)
+    envelope = {
+        "version": PUSH_CRYPTO_VERSION,
+        "ephemeral_public_key": _b64encode(
+            ephemeral.public_key().public_bytes(
+                serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+        ),
+        "nonce": _b64encode(nonce),
+        "ciphertext": _b64encode(AESGCM(key).encrypt(nonce, plaintext, instance_id.encode())),
+    }
+    return json.dumps(envelope, separators=(",", ":")).encode()
 
 
 def _now_ms() -> int:
