@@ -76,6 +76,7 @@ class ChatGPTCodexProvider:
                 len(messages),
                 [tool.name for tool in tools],
             )
+            logger.info("chatgpt-codex request body %s", json.dumps(payload, sort_keys=True))
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",

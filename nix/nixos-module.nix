@@ -96,7 +96,10 @@ in
     logProviderEvents = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Log raw streaming provider events for debugging missing model output such as tool calls.";
+      description = ''
+        Log provider diagnostics, including the ChatGPT Codex request body and raw
+        streaming events. Request bodies can contain conversation content.
+      '';
     };
 
     parallelity = lib.mkOption {
