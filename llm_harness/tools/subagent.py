@@ -46,14 +46,17 @@ class SubagentTool:
         "properties": {
             "context": {
                 "type": "string",
+                "pattern": r"\S",
                 "description": "The task and context to give to the subagent.",
             },
             "provider": {
                 "type": "string",
+                "pattern": r"\S",
                 "description": "Optional provider override.",
             },
             "model": {
                 "type": "string",
+                "pattern": r"\S",
                 "description": "Optional model override.",
             },
             "thinking_level": {
@@ -123,7 +126,8 @@ class SubagentStateTool:
             "session_ids": {
                 "type": "array",
                 "minItems": 1,
-                "items": {"type": "string", "minLength": 1},
+                "items": {"type": "string", "pattern": r"\S"},
+                "uniqueItems": True,
                 "description": "Subagent child session IDs to inspect.",
             },
             "wait_for": {
@@ -535,35 +539,54 @@ def _latest_state(bus: EventBus, session_id: str) -> EventRecord | None:
 
 def _subagent_state(bus: EventBus, session_id: str) -> dict[str, Any]:
     state_event = _latest_state(bus, session_id)
+    failed = bus.latest(
+        EventFilter(names=frozenset({LlmRunFailed.name}), tags={"session": session_id})
+    )
+    # A provider failure is terminal as soon as it is persisted.  The
+    # session-state consumer may not have projected its corresponding state
+    # event yet, especially during replay.
+    if failed is not None and (state_event is None or failed.id > state_event.id):
+        return _failed_state(session_id, failed)
     if state_event is None:
-        # Failure events are terminal even if the state projection has not yet
-        # caught up (for example while replaying a just-restarted worker).
-        failed = bus.latest(EventFilter(names=frozenset({LlmRunFailed.name}), tags={"session": session_id}))
-        if failed is not None:
-            return {
-                "session_id": session_id,
-                "state": "failed",
-                "error": failed.payload.get("error", "subagent run failed"),
-            }
         has_user_message = bus.exists(
             EventFilter(names=frozenset({UserMessageCreated.name}), tags={"session": session_id})
         )
         return {"session_id": session_id, "state": "running" if has_user_message else "starting"}
     if state_event.tags.get("state") != "finished":
         return {"session_id": session_id, "state": "running"}
-    source = _event_by_id(bus, state_event.payload.get("source_event_id"))
+
+    source = _terminal_source(bus, state_event, session_id)
     if state_event.payload.get("outcome") == "failed" or (
         source is not None and source.name == LlmRunFailed.name
     ):
-        error = source.payload.get("error") if source is not None else None
-        return {
-            "session_id": session_id,
-            "state": "failed",
-            "error": error if isinstance(error, str) else "subagent run failed",
-        }
-    text = _text_content(source.payload.get("content")) if source is not None else ""
-    return {"session_id": session_id, "state": "finished", "result": text}
+        return _failed_state(session_id, source)
+    if source is None or source.name != AssistantMessageCreated.name:
+        # The session state is still terminal, but never expose an unrelated
+        # event merely because its ID was placed in source_event_id.
+        return {"session_id": session_id, "state": "finished", "result": ""}
+    return {
+        "session_id": session_id,
+        "state": "finished",
+        "result": _text_content(source.payload.get("content")),
+    }
 
+
+def _terminal_source(
+    bus: EventBus, state_event: EventRecord, session_id: str
+) -> EventRecord | None:
+    source = _event_by_id(bus, state_event.payload.get("source_event_id"))
+    if source is None or source.tags.get("session") != session_id:
+        return None
+    return source
+
+
+def _failed_state(session_id: str, failed: EventRecord | None) -> dict[str, Any]:
+    error = failed.payload.get("error") if failed is not None else None
+    return {
+        "session_id": session_id,
+        "state": "failed",
+        "error": error if isinstance(error, str) else "subagent run failed",
+    }
 
 def _tool_result_for_request(bus: EventBus, request: EventRecord) -> EventRecord | None:
     return bus.latest(
