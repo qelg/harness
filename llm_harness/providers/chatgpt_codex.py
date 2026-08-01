@@ -83,6 +83,8 @@ class ChatGPTCodexProvider:
             "Accept": "text/event-stream",
             "User-Agent": "llm-harness/0.1.0",
         }
+        if messages:
+            headers["session-id"] = messages[0].session_id
 
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(

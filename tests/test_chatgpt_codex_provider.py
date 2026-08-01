@@ -57,6 +57,7 @@ def test_chatgpt_codex_provider_uses_stored_access_token(tmp_path, monkeypatch, 
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer access-token"
+        assert request.headers["session-id"] == "sess_1"
         assert request.url.path.endswith("/responses")
         payload = json.loads(request.content)
         assert payload["instructions"] == "You are a helpful coding assistant."
