@@ -5,6 +5,8 @@ import asyncio
 from llm_harness.builtin_plugins.namer import (
     NAMER_SYSTEM_PROMPT,
     NAMER_USER_INSTRUCTION,
+    ONGOING_RENAME_TITLE,
+    RENAMED_TO_TITLE_PREFIX,
     NamerPlugin,
 )
 from llm_harness.config import Settings
@@ -83,6 +85,7 @@ def test_state_change_starts_tagged_tool_free_namer_session(tmp_path, monkeypatc
     assert child.tags["session_tag:no-auto-llm-run"] == "true"
     assert child.tags["parent_session"] == "sess_parent"
     assert child.payload["parent_session"] == "sess_parent"
+    assert child.payload["title"] == ONGOING_RENAME_TITLE
 
     child_events = bus.replay(EventFilter(tags={"session": child.tags["session"]}))
     messages = [event for event in child_events if event.name.startswith("chat.message.")]
@@ -137,13 +140,17 @@ def test_namer_reply_renames_parent_idempotently(tmp_path, monkeypatch):
     asyncio.run(plugin.process_event(bus, reply))
 
     renamed = bus.replay(EventFilter(names=frozenset({SessionRenamed.name})))
-    assert len(renamed) == 1
-    assert renamed[0].tags["session"] == "sess_parent"
-    assert renamed[0].payload == {
+    assert len(renamed) == 2
+    by_session = {event.tags["session"]: event for event in renamed}
+    assert by_session["sess_namer"].payload == {
+        "title": f"{RENAMED_TO_TITLE_PREFIX}Fix parser error handling safely",
+        "namer_session_id": "sess_namer",
+    }
+    assert by_session["sess_parent"].payload == {
         "title": "Fix parser error handling safely",
         "namer_session_id": "sess_namer",
     }
-    assert renamed[0].causation_id == reply.id
+    assert all(event.causation_id == reply.id for event in renamed)
 
 
 def test_namer_ignores_non_changes_archived_and_namer_sessions(tmp_path, monkeypatch):

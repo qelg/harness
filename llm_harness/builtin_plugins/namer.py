@@ -20,6 +20,8 @@ from llm_harness.core.types import (
 )
 
 NAMER_SESSION_TAG = "namer"
+ONGOING_RENAME_TITLE = "Ongoing rename"
+RENAMED_TO_TITLE_PREFIX = "Renamed to "
 NAMER_SYSTEM_PROMPT = (
     "Summarize the entire conversation, considering all user and assistant messages, "
     "in 5-10 words. Use the summary as the conversation title. "
@@ -110,6 +112,7 @@ class NamerPlugin(EventConsumer):
 
         created = SessionCreated(
             session_id=namer_session_id,
+            title=ONGOING_RENAME_TITLE,
             session_tags=(NAMER_SESSION_TAG, NO_AUTO_LLM_RUN_SESSION_TAG),
             parent_session_id=parent_session_id,
             namer=True,
@@ -156,6 +159,19 @@ class NamerPlugin(EventConsumer):
         title = _text_content(event.payload.get("content")).strip()
         if not title:
             return
+        correlation_id = event.correlation_id or event.id
+        # Keep the helper session useful in the session list: it starts with a
+        # progress title and records the title it chose once its reply arrives.
+        await bus.append_message(
+            SessionRenamed(
+                session_id=event.tags["session"],
+                title=f"{RENAMED_TO_TITLE_PREFIX}{title}",
+                namer_session_id=event.tags["session"],
+            ),
+            producer=self.name,
+            causation_id=event.id,
+            correlation_id=correlation_id,
+        )
         await bus.append_message(
             SessionRenamed(
                 session_id=parent_session_id,
@@ -164,7 +180,7 @@ class NamerPlugin(EventConsumer):
             ),
             producer=self.name,
             causation_id=event.id,
-            correlation_id=event.correlation_id or event.id,
+            correlation_id=correlation_id,
         )
 
 
