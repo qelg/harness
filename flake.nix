@@ -117,6 +117,7 @@
             propagatedBuildInputs = with pythonPackages; [
               fastapi
               httpx
+              cryptography
               pydantic
               uvicorn
             ];
@@ -166,6 +167,7 @@
               python
               pythonPackages.fastapi
               pythonPackages.httpx
+              pythonPackages.cryptography
               pythonPackages.pydantic
               pythonPackages.pytest
               pythonPackages.uvicorn
