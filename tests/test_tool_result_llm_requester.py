@@ -202,3 +202,268 @@ def test_wrong_result_tags_do_not_complete_another_tool_request(tmp_path, monkey
     )
     asyncio.run(plugin.process_event(bus, valid_first))
     assert len(bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))) == 1
+
+
+def test_queued_messages_are_emitted_after_tool_result_before_one_llm_request(
+    tmp_path, monkeypatch
+):
+    from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
+    from llm_harness.core.types import QueuedMessage
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    settings = Settings.from_env()
+    tool_plugin = ToolResultLlmRequesterPlugin(settings=settings)
+    asyncio.run(
+        bus.append_message(ModelSelected(provider="mock-llm", model="mock-model"))
+    )
+    assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                "sess_1",
+                [{"type": "function_call", "name": "terminal"}],
+                "mock-llm",
+                "mock-model",
+                "llm_1",
+            )
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested("sess_1", "terminal", {}, "tool_1"),
+            causation_id=assistant.id,
+        )
+    )
+    first = asyncio.run(
+        bus.append_message(QueuedMessage("sess_1", "steer one", "after_tool"))
+    )
+    second = asyncio.run(
+        bus.append_message(QueuedMessage("sess_1", "steer two", "after_tool"))
+    )
+    result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "output", "terminal", "tool_1"),
+            causation_id=request.id,
+        )
+    )
+
+    async def process_twice():
+        await asyncio.gather(
+            tool_plugin.process_event(bus, result),
+            tool_plugin.process_event(bus, result),
+        )
+
+    asyncio.run(process_twice())
+    users = bus.replay(
+        EventFilter(names=frozenset({"chat.message.user.created"}))
+    )
+    assert [event.payload["content"] for event in users] == [
+        "steer one",
+        "steer two",
+    ]
+    assert [event.causation_id for event in users] == [first.id, second.id]
+    assert result.id < users[0].id
+    assert [
+        event.payload["metadata"]["queued_message_requests_llm"] for event in users
+    ] == [False, False]
+    runs = bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))
+    assert len(runs) == 1
+    assert users[-1].id < runs[0].id
+    assert runs[0].causation_id == assistant.id
+    assert runs[0].payload["metadata"]["trigger"] == "tool_results_completed"
+
+    # Queue-emitted users are ignored by the ordinary requester; replaying it
+    # cannot add a second run.
+    requester = LlmRunRequesterPlugin(settings=settings)
+    asyncio.run(requester.process_pending(bus))
+    assert len(bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))) == 1
+
+
+def test_message_accepted_before_requester_runs_is_inserted_before_request(
+    tmp_path, monkeypatch
+):
+    from llm_harness.core.types import QueuedMessage
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    plugin = ToolResultLlmRequesterPlugin(settings=Settings.from_env())
+    assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                "sess_1", [], "mock-llm", "mock-model", "llm_1"
+            )
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested("sess_1", "terminal", {}, "tool_1"),
+            causation_id=assistant.id,
+        )
+    )
+    result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "output", "terminal", "tool_1"),
+            causation_id=request.id,
+        )
+    )
+    asyncio.run(
+        bus.append_message(QueuedMessage("sess_1", "too late", "after_tool"))
+    )
+
+    asyncio.run(plugin.process_event(bus, result))
+
+    users = bus.replay(
+        EventFilter(names=frozenset({"chat.message.user.created"}))
+    )
+    runs = bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))
+    assert [event.payload["content"] for event in users] == ["too late"]
+    assert len(runs) == 1
+    assert users[0].id < runs[0].id
+
+
+def test_duplicate_tool_result_callback_still_drains_before_first_request(
+    tmp_path, monkeypatch
+):
+    from llm_harness.core.types import QueuedMessage
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    plugin = ToolResultLlmRequesterPlugin(settings=Settings.from_env())
+    assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                "sess_1", [], "mock-llm", "mock-model", "llm_1"
+            )
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested("sess_1", "terminal", {}, "tool_1"),
+            causation_id=assistant.id,
+        )
+    )
+    first_result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "output", "terminal", "tool_1"),
+            causation_id=request.id,
+        )
+    )
+    queued = asyncio.run(
+        bus.append_message(QueuedMessage("sess_1", "later", "after_tool"))
+    )
+    duplicate_result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "output", "terminal", "tool_1"),
+            causation_id=request.id,
+        )
+    )
+    assert first_result.id < queued.id < duplicate_result.id
+
+    asyncio.run(plugin.process_event(bus, duplicate_result))
+
+    users = bus.replay(
+        EventFilter(names=frozenset({"chat.message.user.created"}))
+    )
+    assert [event.payload["content"] for event in users] == ["later"]
+    assert len(bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))) == 1
+
+
+def test_after_tool_queue_waits_for_parallel_results_then_precedes_run(
+    tmp_path, monkeypatch
+):
+    from llm_harness.core.types import QueuedMessage
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    plugin = ToolResultLlmRequesterPlugin(settings=Settings.from_env())
+    assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                "sess_1", [], "mock-llm", "mock-model", "llm_1"
+            )
+        )
+    )
+    first_request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested("sess_1", "terminal", {}, "one"),
+            causation_id=assistant.id,
+        )
+    )
+    second_request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested("sess_1", "terminal", {}, "two"),
+            causation_id=assistant.id,
+        )
+    )
+    queued = asyncio.run(
+        bus.append_message(QueuedMessage("sess_1", "steer", "after_tool"))
+    )
+    first_result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "one", "terminal", "one"),
+            causation_id=first_request.id,
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, first_result))
+
+    assert bus.replay(
+        EventFilter(names=frozenset({"chat.message.user.created"}))
+    ) == []
+    assert bus.replay(EventFilter(names=frozenset({"llm.run.requested"}))) == []
+
+    second_result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "two", "terminal", "two"),
+            causation_id=second_request.id,
+        )
+    )
+    asyncio.run(plugin.process_event(bus, second_result))
+
+    users = bus.replay(EventFilter(names=frozenset({"chat.message.user.created"})))
+    runs = bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))
+    assert len(users) == 1
+    assert users[0].causation_id == queued.id
+    assert second_result.id < users[0].id < runs[0].id
+    assert len(runs) == 1
+
+
+def test_queued_message_before_latest_request_does_not_leak_into_later_tool_turn(
+    tmp_path, monkeypatch
+):
+    from llm_harness.core.types import LlmRunRequested, QueuedMessage
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    plugin = ToolResultLlmRequesterPlugin(settings=Settings.from_env())
+    asyncio.run(bus.append_message(QueuedMessage("sess_1", "stale", "after_tool")))
+    asyncio.run(
+        bus.append_message(
+            LlmRunRequested("sess_1", "mock-llm", "mock-model", "llm_2")
+        )
+    )
+    assistant = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                "sess_1", [], "mock-llm", "mock-model", "llm_2"
+            )
+        )
+    )
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested("sess_1", "terminal", {}, "tool_2"),
+            causation_id=assistant.id,
+        )
+    )
+    result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated("sess_1", "done", "terminal", "tool_2"),
+            causation_id=request.id,
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, result))
+
+    assert bus.replay(
+        EventFilter(names=frozenset({"chat.message.user.created"}))
+    ) == []

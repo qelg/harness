@@ -10,12 +10,18 @@ from fastapi import Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from llm_harness.builtin_plugins.queued_messages import (
+    pending_queued_messages,
+    trigger_already_delivered_queue,
+)
 from llm_harness.config import Settings
 from llm_harness.core.events import BusEvent, EventBus, EventFilter
 from llm_harness.core.types import (
     MESSAGE_CREATED_NAMES,
     PARENT_SESSION,
+    QUEUE_AFTER_RESPONSE,
     ModelSelected,
+    QueuedMessage,
     SessionCreated,
     SessionRenamed,
     SessionStateChanged,
@@ -26,7 +32,9 @@ from llm_harness.core.types import (
 )
 from llm_harness.plugins import Registry
 
-MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset({"llm.run.failed", ToolCallRequested.name})
+MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset(
+    {"llm.run.failed", QueuedMessage.name, ToolCallRequested.name}
+)
 MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta", SessionStateChanged.name})
 
 
@@ -37,6 +45,7 @@ class CreateSessionRequest(BaseModel):
 
 class CreateMessageRequest(BaseModel):
     content: str
+    queue_mode: Literal["after_tool", "after_response"] | None = None
 
 
 class RunToolRequest(BaseModel):
@@ -385,10 +394,7 @@ class HarnessApiPlugin:
         async def create_message(session_id: str, request: CreateMessageRequest) -> dict[str, Any]:
             _require_session_event(bus, session_id)
             event = await bus.append_message(
-                UserMessageCreated(
-                    session_id=session_id,
-                    content=request.content,
-                ),
+                _message_command(session_id, request),
                 producer="harness-api",
             )
             return _message_from_event(event)
@@ -416,10 +422,7 @@ class HarnessApiPlugin:
             async def events() -> AsyncIterator[str]:
                 async with bus.subscribe(EventFilter(tags={"session": session_id})) as queue:
                     event = await bus.append_message(
-                        UserMessageCreated(
-                            session_id=session_id,
-                            content=request.content,
-                        ),
+                        _message_command(session_id, request),
                         producer="harness-api",
                     )
                     yield _sse("message.accepted", {"event_id": event.id})
@@ -430,7 +433,7 @@ class HarnessApiPlugin:
                             yield _sse("heartbeat", {})
                             continue
                         yield _sse(event.type, _dump_bus_payload(event))
-                        if _is_terminal_stream_event(event):
+                        if _is_terminal_stream_event(event, bus=bus):
                             break
 
             return StreamingResponse(events(), media_type="text/event-stream")
@@ -450,12 +453,45 @@ class HarnessApiPlugin:
             return {"status": "accepted", "event": _dump_bus_payload(event)}
 
 
-def _is_terminal_stream_event(event: BusEvent) -> bool:
-    if event.type == "llm.run.failed":
-        return True
-    if event.type != "chat.message.assistant.created":
+def _message_command(session_id: str, request: CreateMessageRequest):
+    if request.queue_mode is None:
+        return UserMessageCreated(session_id=session_id, content=request.content)
+    return QueuedMessage(
+        session_id=session_id,
+        content=request.content,
+        mode=request.queue_mode,
+    )
+
+
+def _is_terminal_stream_event(
+    event: BusEvent, *, bus: EventBus | None = None
+) -> bool:
+    if event.type not in {"llm.run.failed", "chat.message.assistant.created"}:
         return False
-    return not _contains_function_call(event.payload.get("content"))
+    if (
+        event.type == "chat.message.assistant.created"
+        and _contains_function_call(event.payload.get("content"))
+    ):
+        return False
+    if bus is not None and _response_continues_from_queue(bus, event):
+        return False
+    return True
+
+
+def _response_continues_from_queue(bus: EventBus, event: BusEvent) -> bool:
+    session_id = event.tags["session"]
+    return trigger_already_delivered_queue(
+        bus,
+        session_id=session_id,
+        producer="session-state",
+        trigger_event_id=event.id,
+    ) or bool(
+        pending_queued_messages(
+            bus,
+            session_id=session_id,
+            mode=QUEUE_AFTER_RESPONSE,
+        )
+    )
 
 
 def _contains_function_call(content: Any) -> bool:
@@ -569,6 +605,7 @@ def _message_from_event(event: BusEvent) -> dict[str, Any]:
             "tool": event.payload.get("tool"),
             "run_id": event.payload.get("run_id"),
             "metadata": {},
+            "queue_mode": None,
             "event_name": event.name,
             "created_at_ms": event.created_at_ms,
         }
@@ -582,6 +619,7 @@ def _message_from_event(event: BusEvent) -> dict[str, Any]:
         "tool": event.payload.get("tool"),
         "run_id": event.payload.get("run_id"),
         "metadata": event.payload.get("metadata", {}),
+        "queue_mode": event.payload.get("mode") if event.name == QueuedMessage.name else None,
         "event_name": event.name,
         "created_at_ms": event.created_at_ms,
     }
@@ -602,6 +640,7 @@ def _failed_run_message_from_event(event: BusEvent) -> dict[str, Any]:
             "error": error,
             "retryable": event.payload.get("retryable", False),
         },
+        "queue_mode": None,
         "event_name": event.name,
         "created_at_ms": event.created_at_ms,
     }

@@ -577,3 +577,39 @@ def test_api_can_archive_session_without_projected_state(tmp_path, monkeypatch):
     assert response.json()["state"] == "finished"
     assert response.json()["read"] == "read"
     assert response.json()["archive"] == "true"
+
+
+def test_api_can_persist_queued_message_without_creating_chat_history_message(
+    tmp_path, monkeypatch
+):
+    from llm_harness.core.events import EventFilter
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"title": "queue"}).json()["id"]
+
+    response = client.post(
+        f"/sessions/{session_id}/messages",
+        json={"content": "use the test output", "queue_mode": "after_tool"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["event_name"] == "queued.message"
+    assert response.json()["role"] == "user"
+    assert response.json()["queue_mode"] == "after_tool"
+    queued = app.state.bus.replay(
+        EventFilter(names=frozenset({"queued.message"}), tags={"session": session_id})
+    )
+    assert len(queued) == 1
+    assert queued[0].payload["content"] == "use the test output"
+    assert queued[0].tags["queue_mode"] == "after_tool"
+    assert app.state.bus.replay(
+        EventFilter(
+            names=frozenset({"chat.message.user.created"}),
+            tags={"session": session_id},
+        )
+    ) == []
+    assert client.get(f"/sessions/{session_id}/messages").json()[0][
+        "event_name"
+    ] == "queued.message"
