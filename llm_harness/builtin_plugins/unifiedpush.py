@@ -22,6 +22,7 @@ from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import (
     AssistantMessageCreated,
     LlmRunFailed,
+    SecretAsk,
     SessionCreated,
     SessionRenamed,
     SessionStateChanged,
@@ -43,7 +44,8 @@ class UnifiedPushPlugin(EventConsumer):
     name = "unifiedpush"
     subscriber = "plugin:unifiedpush"
     event_filter = EventFilter(
-        names=frozenset({SessionStateChanged.name}), tags={"state": "finished"}
+        names=frozenset({SessionStateChanged.name}),
+        name_prefixes=(),
     )
 
     def __init__(self, *, client: httpx.AsyncClient | None = None) -> None:
@@ -99,17 +101,24 @@ class UnifiedPushPlugin(EventConsumer):
         created = _session_created(bus, session_id)
         if created is None or "parent_session" in created.tags:
             return
-        if not _is_transition_to_finished(bus, event):
+        state = event.tags.get("state")
+        if state not in {"secret.ask", "finished"} or not _is_transition_to_state(bus, event, state):
             return
 
         source = _event_by_id(bus, event.payload.get("source_event_id"))
+        if state == "secret.ask":
+            notification_type = "session.secret.ask"
+            content = _secret_ask_content(source)
+        else:
+            notification_type = "session.finished"
+            content = _notification_content(source)
         payload = {
-            "type": "session.finished",
+            "type": notification_type,
             "session_id": session_id,
             "title": _bounded_text(_session_title(bus, created, event.id), 512),
-            # Keep the complete notification under the limits imposed by common
-            # UnifiedPush distributors while retaining as much of the answer as possible.
-            "content": _bounded_text(_notification_content(source), 3000),
+            # Keep notifications under the limits imposed by common UnifiedPush
+            # distributors while retaining as much useful text as possible.
+            "content": _bounded_text(content, 3000),
             "event_id": event.id,
         }
         plaintext = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
@@ -221,7 +230,7 @@ def _event_by_id(bus: EventBus, event_id: Any) -> EventRecord | None:
     return bus.get_event(event_id)
 
 
-def _is_transition_to_finished(bus: EventBus, event: EventRecord) -> bool:
+def _is_transition_to_state(bus: EventBus, event: EventRecord, state: str) -> bool:
     previous = bus.replay(
         EventFilter(
             names=frozenset({SessionStateChanged.name}),
@@ -229,7 +238,7 @@ def _is_transition_to_finished(bus: EventBus, event: EventRecord) -> bool:
             before_id=event.id,
         )
     )
-    return not previous or previous[-1].tags.get("state") != "finished"
+    return not previous or previous[-1].tags.get("state") != state
 
 
 def _session_title(bus: EventBus, created: EventRecord, before_id: int) -> str:
@@ -242,6 +251,13 @@ def _session_title(bus: EventBus, created: EventRecord, before_id: int) -> str:
     )
     title = renamed[-1].payload.get("title") if renamed else created.payload.get("title")
     return title.strip() if isinstance(title, str) and title.strip() else "Harness session"
+
+
+def _secret_ask_content(source: EventRecord | None) -> str:
+    if source is None or source.name != SecretAsk.name:
+        return "A secret is required"
+    description = source.payload.get("description")
+    return description.strip() if isinstance(description, str) and description.strip() else "A secret is required"
 
 
 def _notification_content(source: EventRecord | None) -> str:

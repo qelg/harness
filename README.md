@@ -440,3 +440,8 @@ container and then emits the normal tool result containing only that path. The
 secret-ask event ID and identifier are both required, and each ask can be
 satisfied only once. Clients should keep the value out of drafts, chat
 messages, event payloads, and logs.
+
+A pending secret request also projects the session state as `secret.ask` (the
+normal live/running state is restored when the `retrieve-secret` tool result is
+written). Top-level UnifiedPush subscribers receive a `session.secret.ask`
+notification whose `content` is the request description.

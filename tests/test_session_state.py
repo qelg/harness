@@ -6,7 +6,9 @@ from llm_harness.builtin_plugins.session_state import SessionStatePlugin
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
+    SecretAsk,
     SessionStateChanged,
+    ToolMessageCreated,
     UserMessageCreated,
 )
 
@@ -280,3 +282,42 @@ def test_queued_message_before_latest_request_does_not_leak_into_later_response(
     assert bus.replay(
         EventFilter(names=frozenset({"chat.message.user.created"}))
     ) == []
+
+
+def test_secret_ask_moves_session_to_secret_state_and_result_back_to_running(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = SessionStatePlugin()
+    ask = asyncio.run(
+        bus.append_message(
+            SecretAsk(
+                session_id="sess_1",
+                description="GitHub token",
+                identifier="secret_identifier_1234",
+                container="llm-harness-session-sess_1",
+                run_id="tool_1",
+            )
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, ask))
+    secret_state = _state_events(bus)[0]
+    assert secret_state.tags["state"] == "secret.ask"
+    assert secret_state.causation_id == ask.id
+    assert secret_state.payload == {"source_event_id": ask.id}
+
+    result = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated(
+                session_id="sess_1",
+                content="Secret written to /secrets/secret_identifier_1234\n",
+                tool="retrieve-secret",
+                run_id="tool_1",
+                metadata={"secret_ask_event_id": ask.id},
+            )
+        )
+    )
+    asyncio.run(plugin.process_event(bus, result))
+
+    states = _state_events(bus)
+    assert [item.tags["state"] for item in states] == ["secret.ask", "running"]
+    assert states[-1].causation_id == result.id
