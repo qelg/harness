@@ -149,14 +149,14 @@ class SessionStateChanged:
     name: str = "session.state"
 
     def __post_init__(self) -> None:
-        if self.state not in {"running", "finished"}:
+        if self.state not in {"running", "secret.ask", "finished"}:
             raise ValueError(f"invalid session state: {self.state}")
         if self.read is not None and self.read not in {"unread", "read"}:
             raise ValueError(f"invalid session read state: {self.read}")
         if self.state == "finished" and self.read is None:
             raise ValueError("finished session states require a read tag")
-        if self.state == "running" and self.read is not None:
-            raise ValueError("running session states cannot have a read tag")
+        if self.state != "finished" and self.read is not None:
+            raise ValueError(f"{self.state} session states cannot have a read tag")
 
     def payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"source_event_id": self.source_event_id}
