@@ -22,7 +22,10 @@ class ChatGPTUsagePlugin(EventConsumer):
 
     name = "chatgpt-usage"
     subscriber = "plugin:chatgpt-usage"
-    event_filter = EventFilter(names=frozenset({AssistantMessageCreated.name}))
+    event_filter = EventFilter(
+        names=frozenset({AssistantMessageCreated.name}),
+        tags={"provider": "chatgpt-codex"},
+    )
 
     def __init__(self, *, conn: sqlite3.Connection, settings: Settings) -> None:
         self.settings = settings
@@ -30,8 +33,6 @@ class ChatGPTUsagePlugin(EventConsumer):
         self.base_url = settings.codex_oauth_base_url.rstrip("/")
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
-        if event.tags.get("provider") != "chatgpt-codex":
-            return
         if bus.replay(EventFilter(
             names=frozenset({"chatgpt.usage"}),
             causation_id=event.id,
@@ -74,10 +75,14 @@ class ChatGPTUsageApiPlugin:
     def install_api(self, *, app, bus: EventBus, registry) -> None:
         @app.get("/chatgpt/usage")
         async def get_chatgpt_usage() -> dict[str, Any]:
-            events = bus.replay(EventFilter(names=frozenset({"chatgpt.usage"})))
+            events = bus.replay(
+                EventFilter(names=frozenset({"chatgpt.usage"})),
+                limit=1,
+                latest=True,
+            )
             if not events:
                 raise HTTPException(status_code=404, detail="no ChatGPT usage available")
-            usage = dict(events[-1].payload)
+            usage = dict(events[0].payload)
             rate_limit = usage.get("rate_limit")
             if isinstance(rate_limit, dict):
                 enriched = dict(rate_limit)
@@ -98,6 +103,6 @@ class ChatGPTUsageApiPlugin:
                         window["remaining_days"] = round(seconds / 86400, 2)
                     enriched[key] = window
                 usage["rate_limit"] = enriched
-            usage["event_id"] = events[-1].id
-            usage["updated_at"] = events[-1].created_at_ms
+            usage["event_id"] = events[0].id
+            usage["updated_at"] = events[0].created_at_ms
             return usage
