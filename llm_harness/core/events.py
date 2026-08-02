@@ -346,7 +346,13 @@ class EventService:
         finally:
             self._subscribers.pop(queue, None)
 
-    def replay(self, event_filter: EventFilter | None = None, *, limit: int | None = None) -> list[EventRecord]:
+    def replay(
+        self,
+        event_filter: EventFilter | None = None,
+        *,
+        limit: int | None = None,
+        latest: bool = False,
+    ) -> list[EventRecord]:
         event_filter = event_filter or EventFilter()
         conditions = ["e.id > ?"]
         params: list[Any] = [event_filter.since_id or 0]
@@ -375,7 +381,8 @@ class EventService:
             conditions.append("e.producer = ?")
             params.append(event_filter.producer)
 
-        sql = "SELECT e.* FROM events e WHERE " + " AND ".join(conditions) + " ORDER BY e.id ASC"
+        order = "DESC" if latest else "ASC"
+        sql = "SELECT e.* FROM events e WHERE " + " AND ".join(conditions) + f" ORDER BY e.id {order}"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
