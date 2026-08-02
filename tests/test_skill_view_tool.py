@@ -68,3 +68,35 @@ def test_consumer_persists_tool_result(tmp_path, monkeypatch):
     assert len(messages) == 1
     assert messages[0].payload["content"].startswith("# Python")
     assert messages[0].payload["metadata"]["skill"] == "python"
+
+
+def test_consumer_persists_failing_result_for_invalid_input(tmp_path, monkeypatch):
+    tool = configured_tool(tmp_path, monkeypatch)
+    bus = EventService(tmp_path / "events.db")
+    consumer = SkillViewToolConsumer(tool=tool)
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id="sess_1",
+                tool="skill_view",
+                input={"name": "python", "file": "../secret"},
+                run_id="tool_1",
+            )
+        )
+    )
+
+    asyncio.run(consumer.process_pending(bus))
+
+    messages = bus.replay(EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "tool_1"}))
+    assert len(messages) == 1
+    assert messages[0].payload["content"] == (
+        "tool execution failed: ValueError: skill file must stay within the skill directory\n"
+    )
+    assert messages[0].payload["metadata"] == {
+        "success": False,
+        "error_type": "ValueError",
+        "error": "skill file must stay within the skill directory",
+    }
+    assert messages[0].causation_id == request.id
+    assert bus.last_acked(consumer.subscriber) == request.id
