@@ -144,6 +144,13 @@ class UnifiedPushPlugin(EventConsumer):
                         "Topic": f"session-{event.id}",
                     },
                 )
+                if response.status_code >= 400:
+                    logger.warning(
+                        "UnifiedPush delivery failed for instance %s: HTTP %s; response body: %s",
+                        instance_id,
+                        response.status_code,
+                        response.text,
+                    )
                 if response.status_code in {404, 410}:
                     with bus.conn:
                         bus.conn.execute(
