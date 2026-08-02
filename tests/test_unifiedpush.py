@@ -119,6 +119,7 @@ def test_finished_top_level_session_sends_title_message_and_session_id(tmp_path)
     asyncio.run(client.aclose())
 
     assert len(requests) == 1
+    assert requests[0].headers["Content-Encoding"] == "aes128gcm"
     envelope = json.loads(requests[0].content)
     assert envelope["version"] == PUSH_CRYPTO_VERSION
     ephemeral = serialization.load_der_public_key(_b64decode(envelope["ephemeral_public_key"]))
