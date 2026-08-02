@@ -20,6 +20,7 @@ from llm_harness.providers.mock import MockLLMProvider
 from llm_harness.providers.openai_compatible import OpenAICompatibleProvider
 from llm_harness.toolsets import DefaultToolSet
 from llm_harness.tools.podman_shell import PodmanShellTool, PodmanShellToolConsumer
+from llm_harness.tools.retrieve_secret import RetrieveSecretApiPlugin, RetrieveSecretTool, RetrieveSecretToolConsumer
 from llm_harness.tools.skill_view import SkillViewTool, SkillViewToolConsumer
 from llm_harness.tools.subagent import SubagentPlugin, SubagentStateTool, SubagentTool
 
@@ -52,6 +53,10 @@ def register(registry, *, bus=None) -> None:
     terminal = PodmanShellTool(settings=settings)
     registry.add_tool(terminal)
     registry.add_event_consumer_plugin(PodmanShellToolConsumer(tool=terminal))
+    retrieve_secret = RetrieveSecretTool(settings=settings)
+    registry.add_tool(retrieve_secret)
+    registry.add_api_plugin(RetrieveSecretApiPlugin(tool=retrieve_secret))
+    registry.add_event_consumer_plugin(RetrieveSecretToolConsumer(tool=retrieve_secret))
     containers = ContainerCleanupPlugin(manager=PodmanContainerManager())
     registry.add_api_plugin(containers)
     registry.add_event_consumer_plugin(containers)

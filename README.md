@@ -422,3 +422,21 @@ secret capability URL.
 No Google Play service, FCM project, API key, or server-side UnifiedPush service
 is required. The Harness host only needs outbound HTTPS access to the endpoint
 provided by the phone's distributor.
+
+## Retrieve secrets without putting them in model context
+
+The built-in `retrieve-secret` tool accepts a description and only works after a
+terminal container for the session has been created. It emits a `secret.ask`
+event containing the description, session, container, and a random identifier;
+it never contains the secret value. A client can upload the value directly to:
+
+```text
+POST /secrets/{secret-ask-event-id}/{identifier}
+```
+
+The request body is the secret bytes, not a chat message or JSON field. The
+server writes them with mode `0600` to `/secrets/{identifier}` in the selected
+container and then emits the normal tool result containing only that path. The
+secret-ask event ID and identifier are both required, and each ask can be
+satisfied only once. Clients should keep the value out of drafts, chat
+messages, event payloads, and logs.
