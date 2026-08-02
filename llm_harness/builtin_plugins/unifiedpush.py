@@ -148,6 +148,10 @@ class UnifiedPushPlugin(EventConsumer):
                     content=body,
                     headers={
                         "Content-Type": "application/json",
+                        # Mozilla Autopush requires a content encoding for
+                        # any non-empty notification body. The encrypted
+                        # UnifiedPush envelope is opaque to the distributor.
+                        "Content-Encoding": "aes128gcm",
                         "TTL": "86400",
                         "Urgency": "normal",
                         "Topic": f"session-{event.id}",
