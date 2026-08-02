@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -134,6 +135,39 @@ def test_finished_top_level_session_sends_title_message_and_session_id(tmp_path)
         "content": "The release is ready.",
         "event_id": state.id,
     }
+
+
+def test_failed_delivery_logs_response_body(tmp_path, caplog):
+    bus = EventService(tmp_path / "events.db")
+    asyncio.run(bus.append_message(SessionCreated("sess_1", "Initial")))
+    answer = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated("sess_1", "done", "mock", "model", "run")
+        )
+    )
+    finished = asyncio.run(
+        bus.append_message(SessionStateChanged("sess_1", "finished", answer.id, read="unread"))
+    )
+    UnifiedPushPlugin._init_schema(bus)
+    _, key = public_key()
+    bus.conn.execute(
+        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?, ?)",
+        ("phone", "https://push.example.test/token", key, 1),
+    )
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="Mozilla rejected the push payload")
+
+    caplog.set_level("WARNING")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(reject))
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(UnifiedPushPlugin(client=client).process_event(bus, finished))
+    finally:
+        asyncio.run(client.aclose())
+
+    assert "HTTP 400" in caplog.text
+    assert "Mozilla rejected the push payload" in caplog.text
 
 
 def test_child_and_repeated_finished_states_do_not_notify(tmp_path):
