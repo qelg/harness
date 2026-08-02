@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from llm_harness.config import Settings
 from llm_harness.builtin_plugins.model_choice import model_choice_for
+from llm_harness.builtin_plugins.queued_messages import QUEUED_MESSAGE_REQUESTS_LLM
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import LlmRunRequested, SessionCreated, new_run_id
@@ -18,9 +20,14 @@ class LlmRunRequesterPlugin(EventConsumer):
 
     def __init__(self, *, settings: Settings):
         self.settings = settings
+        self._mutation_lock = asyncio.Lock()
 
     async def process_event(self, bus: EventBus, event: EventRecord, *, registry: Any = None) -> None:
-        if self._auto_run_disabled(bus, event):
+        async with self._mutation_lock:
+            await self._process_event_locked(bus, event)
+
+    async def _process_event_locked(self, bus: EventBus, event: EventRecord) -> None:
+        if self._auto_run_disabled(bus, event) or not _message_requests_llm(event):
             return
         if await self._already_requested(bus, event):
             return
@@ -64,3 +71,11 @@ class LlmRunRequesterPlugin(EventConsumer):
             ),
             limit=1,
         ))
+
+
+def _message_requests_llm(event: EventRecord) -> bool:
+    metadata = event.payload.get("metadata")
+    return not (
+        isinstance(metadata, dict)
+        and metadata.get(QUEUED_MESSAGE_REQUESTS_LLM) is False
+    )

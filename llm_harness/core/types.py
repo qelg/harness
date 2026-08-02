@@ -20,6 +20,11 @@ READ = "read"
 NAMER = "namer"
 PARENT_SESSION = "parent_session"
 ARCHIVE = "archive"
+QUEUE_MODE = "queue_mode"
+
+QUEUE_AFTER_TOOL = "after_tool"
+QUEUE_AFTER_RESPONSE = "after_response"
+QUEUE_MODES = frozenset({QUEUE_AFTER_TOOL, QUEUE_AFTER_RESPONSE})
 
 
 class Role(StrEnum):
@@ -198,6 +203,41 @@ class UserMessageCreated:
 
     def tags(self) -> dict[str, str]:
         return {SESSION: self.session_id, CHAT: self.session_id, ROLE: "user"}
+
+
+@dataclass(frozen=True)
+class QueuedMessage:
+    """A user message waiting for a deterministic workflow boundary.
+
+    Queued messages are commands, not chat history.  A consumer later emits a
+    ``chat.message.user.created`` event when the selected boundary is reached.
+    """
+
+    session_id: str
+    content: str
+    mode: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    name: str = "queued.message"
+
+    def __post_init__(self) -> None:
+        if self.mode not in QUEUE_MODES:
+            raise ValueError(f"invalid queued message mode: {self.mode}")
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "content": self.content,
+            "mode": self.mode,
+            "metadata": self.metadata,
+        }
+
+    def tags(self) -> dict[str, str]:
+        return {
+            SESSION: self.session_id,
+            CHAT: self.session_id,
+            ROLE: "user",
+            QUEUE_MODE: self.mode,
+        }
 
 
 @dataclass(frozen=True)
@@ -420,6 +460,7 @@ REQUIRED_TAGS: dict[str, frozenset[str]] = {
     SessionStateChanged.name: frozenset({SESSION, STATE}),
     SystemMessageCreated.name: frozenset({SESSION}),
     UserMessageCreated.name: frozenset({SESSION}),
+    QueuedMessage.name: frozenset({SESSION, QUEUE_MODE}),
     AssistantMessageCreated.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     ModelSelected.name: frozenset({PROVIDER, MODEL}),
     LlmRunRequested.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),

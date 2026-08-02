@@ -70,6 +70,26 @@ curl -X POST http://127.0.0.1:8000/sessions/1/tools/terminal \
   -d '{"input":{"cmd":"pwd"}}'
 ```
 
+Nachrichten koennen ausserdem als persistente `queued.message`-Events fuer eine
+laufende Session vorgemerkt werden. `after_tool` fuegt alle bis zum naechsten
+Tool-Ergebnis vorgemerkten Nachrichten ein; bei parallelen Tools wartet der
+folgende LLM-Request weiterhin auf alle Ergebnisse. `after_response` fuegt sie
+nach der naechsten finalen Antwort
+ein; in diesem Fall schreibt das Session-State-Plugin keinen kurzzeitigen
+`finished`-Uebergang. Ohne `queue_mode` bleibt das bisherige sofortige Verhalten
+unveraendert:
+
+```bash
+curl -X POST http://127.0.0.1:8000/sessions/1/messages \
+  -H 'content-type: application/json' \
+  -d '{"content":"Beruecksichtige auch die Tests.","queue_mode":"after_tool"}'
+```
+
+Beruecksichtigt werden ungesendete Queue-Eintraege nach dem letzten
+`llm.run.requested`, die vor der naechsten Requester-Entscheidung angenommen
+wurden. Mehrere Nachrichten werden in Eingabereihenfolge als User-Messages
+geschrieben und loesen gemeinsam genau einen neuen LLM-Run aus.
+
 ## Subagents
 
 Das eingebaute Tool `subagent` startet fuer einen uebergebenen Kontext eine neue,

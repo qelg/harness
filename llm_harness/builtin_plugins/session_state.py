@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
+from llm_harness.builtin_plugins.queued_messages import (
+    pending_queued_messages,
+    queued_delivery_events,
+    trigger_already_delivered_queue,
+)
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import (
     AssistantMessageCreated,
     LlmRunFailed,
+    QUEUE_AFTER_RESPONSE,
     SessionStateChanged,
     UserMessageCreated,
 )
@@ -23,10 +30,27 @@ class SessionStatePlugin(EventConsumer):
         )
     )
 
+    def __init__(self) -> None:
+        # A source event can be replayed while another callback is still
+        # handling it.  Keep queue claim and idempotency checks in one critical
+        # section for this event service.
+        self._mutation_lock = asyncio.Lock()
+
     async def process_event(
         self, bus: EventBus, event: EventRecord, *, registry: Any = None
     ) -> None:
-        if self._already_projected(bus, event):
+        async with self._mutation_lock:
+            await self._process_event_locked(bus, event)
+
+    async def _process_event_locked(
+        self, bus: EventBus, event: EventRecord
+    ) -> None:
+        if self._already_projected(bus, event) or trigger_already_delivered_queue(
+            bus,
+            session_id=event.tags["session"],
+            producer=self.name,
+            trigger_event_id=event.id,
+        ):
             return
 
         if event.name == UserMessageCreated.name:
@@ -34,6 +58,21 @@ class SessionStatePlugin(EventConsumer):
             read = None
             outcome = None
         elif event.name == LlmRunFailed.name:
+            queued = pending_queued_messages(
+                bus,
+                session_id=event.tags["session"],
+                mode=QUEUE_AFTER_RESPONSE,
+            )
+            if queued:
+                await bus.append_batch(
+                    queued_delivery_events(
+                        queued,
+                        producer=self.name,
+                        trigger_event_id=event.id,
+                        correlation_id=event.correlation_id or event.id,
+                    )
+                )
+                return
             state = "finished"
             read = "unread"
             outcome = "failed"
@@ -46,6 +85,21 @@ class SessionStatePlugin(EventConsumer):
             # a finished state while its backoff timer is running.
             return
         else:
+            queued = pending_queued_messages(
+                bus,
+                session_id=event.tags["session"],
+                mode=QUEUE_AFTER_RESPONSE,
+            )
+            if queued:
+                await bus.append_batch(
+                    queued_delivery_events(
+                        queued,
+                        producer=self.name,
+                        trigger_event_id=event.id,
+                        correlation_id=event.correlation_id or event.id,
+                    )
+                )
+                return
             state = "finished"
             read = "unread"
             outcome = _finish_outcome(event)

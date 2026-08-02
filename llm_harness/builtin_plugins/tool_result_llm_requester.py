@@ -4,10 +4,20 @@ import asyncio
 from typing import Any
 
 from llm_harness.builtin_plugins.model_choice import model_choice_for
+from llm_harness.builtin_plugins.queued_messages import (
+    pending_queued_messages,
+    queued_delivery_events,
+)
 from llm_harness.config import Settings
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
-from llm_harness.core.types import LlmRunRequested, ToolCallRequested, ToolMessageCreated, new_run_id
+from llm_harness.core.types import (
+    LlmRunRequested,
+    QUEUE_AFTER_TOOL,
+    ToolCallRequested,
+    ToolMessageCreated,
+    new_run_id,
+)
 
 
 class ToolResultLlmRequesterPlugin(EventConsumer):
@@ -43,8 +53,28 @@ class ToolResultLlmRequesterPlugin(EventConsumer):
         if not requests:
             return
         completed_request_ids = _completed_tool_request_ids(bus, requests)
+
         if any(tool_request.id not in completed_request_ids for tool_request in requests):
             return
+
+        # This is the point where the requester would otherwise call the model.
+        # Insert all steering messages accepted since the previous LLM request
+        # immediately before the one follow-up request.
+        queued = pending_queued_messages(
+            bus,
+            session_id=assistant.tags["session"],
+            mode=QUEUE_AFTER_TOOL,
+        )
+        if queued:
+            await bus.append_batch(
+                queued_delivery_events(
+                    queued,
+                    producer=self.name,
+                    trigger_event_id=event.id,
+                    correlation_id=assistant.correlation_id or assistant.id,
+                    request_llm_from_last=False,
+                )
+            )
 
         choice = model_choice_for(bus, assistant.session_id, self.settings)
         await bus.append_message(
@@ -119,5 +149,8 @@ def _completed_tool_request_ids(
             or result.tags.get("run") != request.tags.get("run")
         ):
             continue
-        completed[request.id] = result.id
+        # The first valid result is the point at which this request became
+        # complete. Replayed/duplicate results must not move the queue boundary
+        # forward and pull a later queued command into an earlier LLM turn.
+        completed.setdefault(request.id, result.id)
     return completed

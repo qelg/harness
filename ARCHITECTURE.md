@@ -74,11 +74,25 @@ API-Plugins koennen beim Start eigene Routen und eigene Tabellen installieren. D
 
 1. API validiert die Session.
 2. API schreibt `chat.message.user.created`.
-3. Das `llm-run-requester` Plugin reagiert auf die User-Message und schreibt `llm.run.requested` mit der aktuellen Modell-Auswahl.
+3. Das `llm-run-requester` Plugin reagiert auf die User-Message und schreibt `llm.run.requested` mit der aktuellen Modell-Auswahl. Ein `queued.message` wird dagegen erst an seiner Grenze als User-Message emittiert.
 4. Das `llm-provider-runner` Plugin reagiert auf `llm.run.requested` fuer den passenden Provider.
 5. Der Provider-Runner rekonstruiert den bisherigen Verlauf aus `chat.message.*.created` Events der Session.
 6. Der Provider-Runner schreibt `llm.run.started`, publiziert transiente `llm.delta` Events und schreibt nach Abschluss `chat.message.assistant.created`.
 7. Enthaelt die fertige Provider-Antwort den Fehlercode `server_is_overloaded` oder `server_error`, wartet das eigenstaendige `server-overloaded-retry` Plugin zunaechst 30 Sekunden und schreibt dann ein neues `llm.run.requested`. Wiederholte transiente Serverfehler verwenden 60, 120, 240 usw. Sekunden. Provider, Modell, Toolsets und Korrelations-ID bleiben erhalten; jeder Versuch bekommt eine neue Run-ID.
+
+`POST /sessions/{session_id}/messages` akzeptiert optional `queue_mode` mit
+`after_tool` oder `after_response`. Dann schreibt die API statt einer sofortigen
+User-Message ein `queued.message`. Der Tool-Result-Requester emittiert
+`after_tool`-Nachrichten, sobald die Tool-Ergebnisse vollstaendig sind und
+unmittelbar bevor er sonst den naechsten LLM-Request schreiben wuerde. Das
+Session-State-Plugin emittiert `after_response`-Nachrichten an einer finalen
+Assistant-Antwort (oder einem terminalen Run-Fehler) statt eines
+`finished`-Events. Ein atomarer Drain schreibt alle bis zu dieser Grenze
+vorhandenen Queue-Eintraege in Reihenfolge als User-Messages; nur die letzte
+fordert den gemeinsamen LLM-Run an. Causation verweist von jeder emittierten
+User-Message auf ihr `queued.message`-Event. Beruecksichtigt werden ungesendete
+Queue-Eintraege nach dem letzten `llm.run.requested`, die vor der naechsten
+Requester- beziehungsweise Session-State-Entscheidung angenommen wurden.
 
 ### Events streamen
 

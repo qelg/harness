@@ -139,3 +139,32 @@ def test_session_state_event_validates_state_and_read_tags():
         SessionStateChanged(
             session_id="sess_1", state="finished", source_event_id=3
         )
+
+
+def test_queued_message_is_a_validated_session_command():
+    from llm_harness.core.types import QueuedMessage
+
+    queued = QueuedMessage(
+        session_id="sess_1",
+        content="change direction",
+        mode="after_tool",
+    )
+
+    assert queued.name == "queued.message"
+    assert queued.payload() == {
+        "content": "change direction",
+        "mode": "after_tool",
+        "metadata": {},
+    }
+    assert queued.tags() == {
+        "session": "sess_1",
+        "chat": "sess_1",
+        "role": "user",
+        "queue_mode": "after_tool",
+    }
+    assert required_tags_for("queued.message") == frozenset(
+        {"session", "queue_mode"}
+    )
+
+    with pytest.raises(ValueError, match="invalid queued message mode"):
+        QueuedMessage(session_id="sess_1", content="no", mode="later")
