@@ -28,6 +28,7 @@ const els = {
   authStatus: document.querySelector("#authStatus"),
   loginChatGPT: document.querySelector("#loginChatGPT"),
   deviceLogin: document.querySelector("#deviceLogin"),
+  usageStatus: document.querySelector("#usageStatus"),
   messages: document.querySelector("#messages"),
   messageForm: document.querySelector("#messageForm"),
   messageContent: document.querySelector("#messageContent"),
@@ -52,6 +53,7 @@ async function init() {
   await loadProviders();
   await loadToolsets();
   await loadChatGPTTokens();
+  await loadChatGPTUsage();
   await loadSessions();
 }
 
@@ -93,6 +95,24 @@ async function loadChatGPTTokens() {
   }
 }
 
+async function loadChatGPTUsage() {
+  try {
+    const usage = await request("/chatgpt/usage");
+    const windows = ["primary_window", "secondary_window"]
+      .map((key) => usage.rate_limit?.[key])
+      .filter(Boolean)
+      .map((window) => {
+        const reset = window.remaining_days >= 1
+          ? `${window.remaining_days} days`
+          : `${window.remaining_hours} hours`;
+        return `${window.remaining_percent}% remaining (${reset})`;
+      });
+    els.usageStatus.textContent = windows.length ? `Codex: ${windows.join("; ")}` : "Usage unavailable";
+  } catch (_error) {
+    els.usageStatus.textContent = "Usage unavailable";
+  }
+}
+
 async function startChatGPTLogin() {
   els.loginChatGPT.disabled = true;
   els.deviceLogin.hidden = true;
@@ -121,6 +141,7 @@ async function pollChatGPTLogin(device) {
       setAuthStatus(`Logged in as ${payload.token.subject}`);
       ensureProviderOption("chatgpt-codex");
       await loadProviders();
+      await loadChatGPTUsage();
       return;
     }
     current = payload;

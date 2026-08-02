@@ -357,3 +357,10 @@ p {
     padding-top: 0.8rem;
   }
 }
+
+.usage-status {
+  max-width: 24rem;
+  color: var(--muted, #687080);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}

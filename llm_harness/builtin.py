@@ -4,6 +4,7 @@ from llm_harness.api_plugin import HarnessApiPlugin
 from llm_harness.config import Settings
 from llm_harness.auth_plugins.chatgpt_oauth import ChatGPTOAuthPlugin
 from llm_harness.auth_plugins.openai_codex_device import OpenAICodexDeviceAuthPlugin
+from llm_harness.builtin_plugins.chatgpt_usage import ChatGPTUsageApiPlugin, ChatGPTUsagePlugin
 from llm_harness.builtin_plugins.container_cleanup import ContainerCleanupPlugin, PodmanContainerManager
 from llm_harness.builtin_plugins.llm_provider_runner import LlmProviderRunnerPlugin
 from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
@@ -26,6 +27,7 @@ from llm_harness.tools.subagent import SubagentPlugin, SubagentStateTool, Subage
 def register(registry, *, bus=None) -> None:
     settings = Settings.from_env()
     registry.add_api_plugin(HarnessApiPlugin(settings=settings))
+    registry.add_api_plugin(ChatGPTUsageApiPlugin())
     registry.add_provider(
         OpenAICompatibleProvider(
             name="openai-codex",
@@ -67,6 +69,8 @@ def register(registry, *, bus=None) -> None:
     registry.add_api_plugin(ChatGPTOAuthPlugin(settings=settings))
     registry.add_api_plugin(OpenAICodexDeviceAuthPlugin(settings=settings))
     registry.add_event_consumer_plugin(SessionStatePlugin())
+    if bus is not None:
+        registry.add_event_consumer_plugin(ChatGPTUsagePlugin(conn=bus.conn, settings=settings))
     registry.add_event_consumer_plugin(SystemPromptPlugin(settings=settings))
     unifiedpush = UnifiedPushPlugin()
     registry.add_api_plugin(unifiedpush)
