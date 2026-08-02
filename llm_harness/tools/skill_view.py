@@ -103,14 +103,14 @@ class SkillViewToolConsumer(EventConsumer):
         )
         try:
             result = await self.tool.run(call)
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "tool execution failed tool=%s session=%s run=%s",
                 self.tool.name,
                 event.tags["session"],
                 event.tags["run"],
             )
-            raise
+            result = _exception_result(exc)
         await bus.append_message(
             ToolMessageCreated(
                 session_id=event.tags["session"],
@@ -155,3 +155,17 @@ def _line_range(input_: dict) -> tuple[int | None, int | None]:
         raise ValueError("line_end must be greater than or equal to line_start")
     # Preserve the requested range in metadata, even when it extends beyond EOF.
     return line_start, line_end
+
+
+def _exception_result(exc: Exception) -> ToolResult:
+    error_type = type(exc).__name__
+    error_message = str(exc)
+    description = f"{error_type}: {error_message}" if error_message else error_type
+    return ToolResult(
+        output=f"tool execution failed: {description}\n",
+        metadata={
+            "success": False,
+            "error_type": error_type,
+            "error": error_message,
+        },
+    )
