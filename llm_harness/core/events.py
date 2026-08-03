@@ -96,6 +96,12 @@ class EventService:
         return self._conn
 
     @property
+    def last_event_id(self) -> int:
+        """Return the current event-store high-water mark."""
+        row = self._conn.execute("SELECT COALESCE(MAX(id), 0) AS event_id FROM events").fetchone()
+        return int(row["event_id"]) if row is not None else 0
+
+    @property
     def projections_ready(self) -> bool:
         return self._projections_ready
 

@@ -355,6 +355,18 @@ Die fuer eine Uebersicht optimierte API gibt pro Session nur den neuesten Zustan
 curl http://127.0.0.1:8000/session-states
 ```
 
+`GET /sessions` enthaelt den neuesten Zustand inzwischen direkt als
+`session_state`-Objekt (oder `null`, wenn die Session noch keinen Zustand hat).
+Damit kann ein Client die Session-Liste und ihren aktuellen Lauf-/Lesestatus mit
+einem Snapshot laden. Der Snapshot liefert ausserdem den globalen exklusiven
+Event-Cursor im Header `X-Harness-Event-Cursor`. Fuer inkrementelle Uebersichten
+gibt es `GET /sessions/updates?since_id=<event-id>`. Die Antwort enthaelt
+`updates` fuer neue Top-Level-Session-Erstellungen, Umbenennungen und
+Zustandswechsel; jedes Update enthaelt die vollstaendige aktuelle
+Session-Projektion sowie `next_since_id` und `has_more`. Clients koennen den
+Cursor nach jedem Polling-Durchlauf speichern und verpasste Aenderungen
+idempotent anwenden.
+
 Die vollstaendige State-Historie einer Session ist ebenfalls verfuegbar. Ein fertiger Zustand kann idempotent als gelesen markiert werden. Eine Session wird durch ein neues `session.state` Event mit `archive=true` archiviert. Das naechste regulaere State-Event, beispielsweise nach einer neuen Nachricht, enthaelt dieses Tag nicht mehr und hebt die Archivierung damit automatisch auf:
 
 ```bash
