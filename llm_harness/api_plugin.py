@@ -135,11 +135,17 @@ class HarnessApiPlugin:
                     return
                 if event.durable:
                     delivered_durable_ids.add(event.id)
-                await websocket.send_json({
+                frame = {
                     "type": "event",
                     "event": _dump_bus_payload(event),
                     "cursor": event.id if event.durable else None,
-                })
+                }
+                # Keep the event stream as useful as the existing message-update
+                # stream: clients that want chat items need not duplicate the
+                # server's event-to-message projection.
+                if event.name in MESSAGE_TIMELINE_NAMES:
+                    frame["message"] = _message_from_event(event)
+                await websocket.send_json(frame)
 
             async def subscribe(event_types: list[str], since_id: int | None) -> None:
                 nonlocal subscriptions
