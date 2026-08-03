@@ -23,6 +23,7 @@ from llm_harness.tools.podman_shell import PodmanShellTool, PodmanShellToolConsu
 from llm_harness.tools.retrieve_secret import RetrieveSecretApiPlugin, RetrieveSecretTool, RetrieveSecretToolConsumer
 from llm_harness.tools.skill_view import SkillViewTool, SkillViewToolConsumer
 from llm_harness.tools.subagent import SubagentPlugin, SubagentStateTool, SubagentTool
+from llm_harness.tools.tasks import TasksTool, TasksToolConsumer
 
 
 def register(registry, *, bus=None) -> None:
@@ -63,6 +64,9 @@ def register(registry, *, bus=None) -> None:
     skill_view = SkillViewTool(settings=settings)
     registry.add_tool(skill_view)
     registry.add_event_consumer_plugin(SkillViewToolConsumer(tool=skill_view))
+    tasks = TasksTool()
+    registry.add_tool(tasks)
+    registry.add_event_consumer_plugin(TasksToolConsumer(tool=tasks))
     subagent = SubagentTool()
     subagent_state = SubagentStateTool()
     registry.add_tool(subagent)

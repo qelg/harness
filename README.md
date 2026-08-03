@@ -5,7 +5,7 @@ Ein kleines, erweiterbares Harness fuer session-isolierte LLM-Chats.
 ## Enthalten
 
 - LLM-Provider als Plugins: eingebaut sind `openai-codex`, `openrouter` und `mock-llm`.
-- Tools als Plugins: eingebaut sind `terminal`, `skill_view` und `subagent`.
+- Tools als Plugins: eingebaut sind `terminal`, `skill_view`, `tasks` und `subagent`.
 - Sessions mit Tags als persistente Events in SQLite.
 - Messages und Workflow-Zustand als persistente Events in SQLite.
 - Streaming-Antworten via Server-Sent Events.
