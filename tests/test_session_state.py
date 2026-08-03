@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from llm_harness.builtin_plugins.session_state import SessionStatePlugin
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
     SessionStateChanged,
+    ToolMessageCreated,
     UserMessageCreated,
 )
 
@@ -57,6 +59,58 @@ def test_final_assistant_message_projects_unread_finished_state(tmp_path):
     assert state.payload == {"source_event_id": source.id, "outcome": "stop"}
     assert state.causation_id == source.id
     assert state.correlation_id == 123
+
+
+def test_task_result_is_projected_into_running_and_finished_session_states(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = SessionStatePlugin()
+    result = {
+        "tasks": [
+            {"id": 0, "name": "done", "state": "finished"},
+            {"id": 1, "name": "working", "state": "in_progress"},
+            {"id": 2, "name": "later", "state": "todo"},
+        ],
+        "total": 3,
+        "finished": 1,
+        "in_progress": 1,
+    }
+    task_event = asyncio.run(
+        bus.append_message(
+            ToolMessageCreated(
+                session_id="sess_1",
+                content=json.dumps(result),
+                tool="tasks",
+                run_id="tool_1",
+                metadata=result,
+            )
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, task_event))
+
+    running = _state_events(bus)[0]
+    assert running.tags["state"] == "running"
+    assert running.payload["tasks"] == result["tasks"]
+    assert running.payload["total"] == 3
+    assert running.payload["finished"] == 1
+    assert running.payload["in_progress"] == 1
+
+    answer = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_1",
+                content="still working",
+                provider="mock",
+                model="test",
+                run_id="llm_1",
+            )
+        )
+    )
+    asyncio.run(plugin.process_event(bus, answer))
+
+    finished = _state_events(bus)[-1]
+    assert finished.tags["state"] == "finished"
+    assert finished.payload["tasks"] == result["tasks"]
 
 
 def test_assistant_tool_call_does_not_finish_session(tmp_path):

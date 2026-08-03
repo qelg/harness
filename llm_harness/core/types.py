@@ -145,6 +145,10 @@ class SessionStateChanged:
     read: str | None = None
     outcome: str | None = None
     archived: bool = False
+    tasks: list[dict[str, Any]] | None = None
+    total: int | None = None
+    finished: int | None = None
+    in_progress: int | None = None
 
     name: str = "session.state"
 
@@ -162,6 +166,17 @@ class SessionStateChanged:
         payload: dict[str, Any] = {"source_event_id": self.source_event_id}
         if self.outcome is not None:
             payload["outcome"] = self.outcome
+        if self.tasks is not None:
+            payload["tasks"] = self.tasks
+            payload["total"] = self.total if self.total is not None else len(self.tasks)
+            payload["finished"] = self.finished if self.finished is not None else sum(
+                task.get("state") == "finished" for task in self.tasks
+            )
+            payload["in_progress"] = (
+                self.in_progress
+                if self.in_progress is not None
+                else sum(task.get("state") == "in_progress" for task in self.tasks)
+            )
         return payload
 
     def tags(self) -> dict[str, str]:

@@ -165,7 +165,8 @@ class HarnessApiPlugin:
             """Return each session's latest state, newest activity first."""
             if bus.projections_ready:
                 rows = bus.conn.execute(
-                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, "
+                    "tasks_json, tasks_total, tasks_finished, tasks_in_progress, event_id, created_at_ms "
                     "FROM projected_session_states ORDER BY event_id DESC"
                 ).fetchall()
                 return [_session_state_from_projection_row(row) for row in rows]
@@ -186,7 +187,8 @@ class HarnessApiPlugin:
             _require_session_event(bus, session_id)
             if bus.projections_ready:
                 row = bus.conn.execute(
-                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, "
+                    "tasks_json, tasks_total, tasks_finished, tasks_in_progress, event_id, created_at_ms "
                     "FROM projected_session_states WHERE session_id = ?",
                     (session_id,),
                 ).fetchone()
@@ -203,6 +205,7 @@ class HarnessApiPlugin:
                         source_event_id=row["source_event_id"],
                         read="read",
                         outcome=row["outcome"],
+                        **_task_fields_from_projection_row(row),
                     ),
                     producer="harness-api",
                     causation_id=row["event_id"],
@@ -229,6 +232,7 @@ class HarnessApiPlugin:
                     source_event_id=latest.payload["source_event_id"],
                     read="read",
                     outcome=latest.payload.get("outcome"),
+                    **_task_fields_from_payload(latest.payload),
                 ),
                 producer="harness-api",
                 causation_id=latest.id,
@@ -241,7 +245,8 @@ class HarnessApiPlugin:
             _require_session_event(bus, session_id)
             if bus.projections_ready:
                 row = bus.conn.execute(
-                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, "
+                    "tasks_json, tasks_total, tasks_finished, tasks_in_progress, event_id, created_at_ms "
                     "FROM projected_session_states WHERE session_id = ?",
                     (session_id,),
                 ).fetchone()
@@ -272,6 +277,7 @@ class HarnessApiPlugin:
                         source_event_id=source_event_id,
                         read=read,
                         outcome=outcome,
+                        **(_task_fields_from_projection_row(row) if row is not None else {}),
                         archived=True,
                     ),
                     producer="harness-api",
@@ -318,6 +324,7 @@ class HarnessApiPlugin:
                     source_event_id=source_event_id,
                     read=read,
                     outcome=outcome,
+                    **(_task_fields_from_payload(latest.payload) if latest is not None else {}),
                     archived=True,
                 ),
                 producer="harness-api",
@@ -540,8 +547,38 @@ def _session_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
     return session
 
 
-def _session_state_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
+def _task_fields_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return {}
+    valid_tasks = [task for task in tasks if isinstance(task, dict)]
     return {
+        "tasks": tasks,
+        "total": payload.get("total", len(tasks)),
+        "finished": payload.get(
+            "finished", sum(task.get("state") == "finished" for task in valid_tasks)
+        ),
+        "in_progress": payload.get(
+            "in_progress",
+            sum(task.get("state") == "in_progress" for task in valid_tasks),
+        ),
+    }
+
+
+def _task_fields_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
+    tasks_json = row["tasks_json"]
+    if tasks_json is None:
+        return {}
+    return {
+        "tasks": json.loads(tasks_json),
+        "total": row["tasks_total"],
+        "finished": row["tasks_finished"],
+        "in_progress": row["tasks_in_progress"],
+    }
+
+
+def _session_state_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
+    result = {
         "session_id": row["session_id"],
         "state": row["state"],
         "read": row["read_state"],
@@ -551,10 +588,12 @@ def _session_state_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
         "event_id": row["event_id"],
         "created_at_ms": row["created_at_ms"],
     }
+    result.update(_task_fields_from_projection_row(row))
+    return result
 
 
 def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
-    return {
+    result = {
         "session_id": event.tags["session"],
         "state": event.tags["state"],
         "read": event.tags.get("read"),
@@ -564,7 +603,8 @@ def _session_state_from_event(event: BusEvent) -> dict[str, Any]:
         "event_id": event.id,
         "created_at_ms": event.created_at_ms,
     }
-
+    result.update(_task_fields_from_payload(event.payload))
+    return result
 
 def _session_from_events(bus: EventBus, event: BusEvent) -> dict[str, Any]:
     title = event.payload.get("title")

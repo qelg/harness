@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi.testclient import TestClient
 
@@ -456,6 +457,57 @@ def test_api_lists_latest_session_states_by_activity(tmp_path, monkeypatch):
     assert [event.id for event in state_events] == [
         state["event_id"] for state in history.json()
     ]
+
+
+def test_api_exposes_task_state_in_session_events_and_preserves_it_on_read(tmp_path, monkeypatch):
+    from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+    from llm_harness.core.types import AssistantMessageCreated, ToolMessageCreated
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    plugin = SessionStatePlugin()
+    session_id = client.post("/sessions", json={"title": "tasks"}).json()["id"]
+    task_state = {
+        "tasks": [
+            {"id": 0, "name": "done", "state": "finished"},
+            {"id": 1, "name": "working", "state": "in_progress"},
+        ],
+        "total": 2,
+        "finished": 1,
+        "in_progress": 1,
+    }
+    task_event = asyncio.run(
+        app.state.bus.append_message(
+            ToolMessageCreated(
+                session_id=session_id,
+                content=json.dumps(task_state),
+                tool="tasks",
+                run_id="tool_1",
+                metadata=task_state,
+            )
+        )
+    )
+    asyncio.run(plugin.process_event(app.state.bus, task_event))
+    answer = asyncio.run(
+        app.state.bus.append_message(
+            AssistantMessageCreated(
+                session_id=session_id,
+                content="done",
+                provider="mock-llm",
+                model="test-model",
+                run_id="llm_1",
+            )
+        )
+    )
+    asyncio.run(plugin.process_event(app.state.bus, answer))
+
+    state = client.get("/session-states").json()[0]
+    assert state["tasks"] == task_state["tasks"]
+    assert state["total"] == 2
+    assert state["finished"] == 1
+    assert state["in_progress"] == 1
+    assert client.post(f"/sessions/{session_id}/state/read").json()["tasks"] == task_state["tasks"]
 
 
 def test_api_rejects_state_history_for_unknown_session(tmp_path, monkeypatch):

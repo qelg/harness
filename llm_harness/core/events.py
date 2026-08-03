@@ -149,6 +149,10 @@ class EventService:
               archived INTEGER NOT NULL DEFAULT 0,
               source_event_id INTEGER NOT NULL,
               outcome TEXT,
+              tasks_json TEXT,
+              tasks_total INTEGER,
+              tasks_finished INTEGER,
+              tasks_in_progress INTEGER,
               event_id INTEGER NOT NULL,
               created_at_ms INTEGER NOT NULL
             );
@@ -183,6 +187,21 @@ class EventService:
               ON projected_session_states(event_id DESC);
             """
         )
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(projected_session_states)")
+        }
+        for name, definition in (
+            ("tasks_json", "TEXT"),
+            ("tasks_total", "INTEGER"),
+            ("tasks_finished", "INTEGER"),
+            ("tasks_in_progress", "INTEGER"),
+        ):
+            if name not in columns:
+                self._conn.execute(
+                    f"ALTER TABLE projected_session_states ADD COLUMN {name} {definition}"
+                )
+        self._conn.commit()
 
     async def append_message(
         self,
@@ -661,22 +680,45 @@ class EventService:
             archived = 1 if record.tags.get("archive") == "true" else 0
             source_event_id = record.payload["source_event_id"]
             outcome = record.payload.get("outcome")
+            tasks = record.payload.get("tasks")
+            tasks_json = json.dumps(tasks) if isinstance(tasks, list) else None
+            tasks_total = record.payload.get("total")
+            tasks_finished = record.payload.get("finished")
+            tasks_in_progress = record.payload.get("in_progress")
             self._conn.execute(
                 """
                 INSERT INTO projected_session_states(
-                  session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  session_id, state, read_state, archived, source_event_id, outcome,
+                  tasks_json, tasks_total, tasks_finished, tasks_in_progress, event_id, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                   state = excluded.state,
                   read_state = excluded.read_state,
                   archived = excluded.archived,
                   source_event_id = excluded.source_event_id,
                   outcome = excluded.outcome,
+                  tasks_json = excluded.tasks_json,
+                  tasks_total = excluded.tasks_total,
+                  tasks_finished = excluded.tasks_finished,
+                  tasks_in_progress = excluded.tasks_in_progress,
                   event_id = excluded.event_id,
                   created_at_ms = excluded.created_at_ms
                 WHERE excluded.event_id > projected_session_states.event_id
                 """,
-                (session_id, state, read_state, archived, source_event_id, outcome, record.id, record.created_at_ms),
+                (
+                    session_id,
+                    state,
+                    read_state,
+                    archived,
+                    source_event_id,
+                    outcome,
+                    tasks_json,
+                    tasks_total,
+                    tasks_finished,
+                    tasks_in_progress,
+                    record.id,
+                    record.created_at_ms,
+                ),
             )
 
         elif record.name == "llm.model.selected":
