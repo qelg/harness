@@ -720,3 +720,47 @@ def test_api_can_persist_queued_message_without_creating_chat_history_message(
     assert client.get(f"/sessions/{session_id}/messages").json()[0][
         "event_name"
     ] == "queued.message"
+
+
+def test_websocket_replays_selected_events_from_cursor(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+    first = client.post("/sessions", json={"title": "first"}).json()
+    second = client.post("/sessions", json={"title": "second"}).json()
+
+    with client.websocket_connect("/events") as socket:
+        socket.send_json(
+            {
+                "type": "subscribe",
+                "event_types": ["session.created"],
+                "since_id": first["event_id"] - 1,
+            }
+        )
+        replayed = [socket.receive_json(), socket.receive_json()]
+        assert [item["event"]["name"] for item in replayed] == [
+            "session.created",
+            "session.created",
+        ]
+        assert [item["event"]["tags"]["session"] for item in replayed] == [
+            first["id"],
+            second["id"],
+        ]
+        assert replayed[0]["cursor"] == first["event_id"]
+        subscribed = socket.receive_json()
+        assert subscribed["type"] == "subscribed"
+        assert subscribed["event_types"] == ["session.created"]
+        assert subscribed["cursor"] >= second["event_id"]
+
+
+def test_websocket_unsubscribe_stops_event_type_replay(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+    client.post("/sessions", json={"title": "existing"})
+
+    with client.websocket_connect("/events") as socket:
+        socket.send_json({"type": "subscribe", "event_types": ["session.state"], "since_id": 0})
+        assert socket.receive_json()["type"] == "subscribed"
+        socket.send_json({"type": "unsubscribe", "event_types": ["session.state"]})
+        response = socket.receive_json()
+        assert response["type"] == "subscribed"
+        assert response["event_types"] == []

@@ -100,6 +100,12 @@ hinweg vorgemerkt und werden bei der naechsten finalen Antwort ausgeliefert.
 
 ### Events streamen
 
+`GET /events` (WebSocket) ist der account-weite, wiederaufnehmbare Event-Stream.
+Clients senden `subscribe`/`unsubscribe` mit Event-Typen und einem exklusiven
+`since_id`; persistierte Events werden replayed, bevor Live-Events folgen.
+Transiente Deltas haben keinen Cursor. Der Android-Client verwendet diesen Stream
+fuer Uebersicht, Session-Nachrichten, Children und Event-Details.
+
 `GET /sessions/{session_id}/events/stream`
 
 1. API abonniert den Event-Bus.
