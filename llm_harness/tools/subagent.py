@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 from llm_harness.builtin_plugins.model_choice import ModelChoice, model_choice_for
@@ -32,6 +33,8 @@ SUBAGENT_RESPONSE_PREFIX = "subagent response:"
 THINKING_LEVELS = ("none", "low", "medium", "high")
 WAIT_MODES = ("any", "all")
 RECURSIVE_SUBAGENT_LIMIT = "recursive_subagent_limit"
+
+logger = logging.getLogger(__name__)
 
 
 class SubagentTool:
@@ -349,7 +352,16 @@ class SubagentPlugin(EventConsumer):
     async def _fulfill_state_request(self, bus: EventBus, request: EventRecord) -> None:
         if _tool_result_for_request(bus, request) is not None:
             return
-        result = await self._state_result_for_request(bus, request)
+        try:
+            result = await self._state_result_for_request(bus, request)
+        except Exception as exc:
+            logger.exception(
+                "subagent state tool failed session=%s run=%s",
+                request.tags.get("session"),
+                request.tags.get("run"),
+            )
+            error = _exception_result(exc)
+            result = (error.output, error.metadata)
         if result is None:
             return
         await self._append_state_result(bus, request, result)
@@ -378,6 +390,9 @@ class SubagentPlugin(EventConsumer):
         validated = await self.state_tool.run(call)
         session_ids = validated.metadata["session_ids"]
         children = {child.tags["session"] for child in _subagent_children(bus, request.tags["session"])}
+        unknown = [session_id for session_id in session_ids if _session_created(bus, session_id) is None]
+        if unknown:
+            raise ValueError(f"unknown subagent session id: {unknown[0]}")
         if any(session_id not in children for session_id in session_ids):
             raise ValueError("all session_ids must be subagent children of the calling session")
 
@@ -651,6 +666,17 @@ def _failed_state(session_id: str, failed: EventRecord | None) -> dict[str, Any]
         "state": "failed",
         "error": error if isinstance(error, str) else "subagent run failed",
     }
+
+
+def _exception_result(exc: Exception) -> ToolResult:
+    error_type = type(exc).__name__
+    error_message = str(exc)
+    description = f"{error_type}: {error_message}" if error_message else error_type
+    return ToolResult(
+        output=f"tool execution failed: {description}\n",
+        metadata={"success": False, "error_type": error_type, "error": error_message},
+    )
+
 
 def _tool_result_for_request(bus: EventBus, request: EventRecord) -> EventRecord | None:
     return bus.latest(
