@@ -20,6 +20,7 @@ from llm_harness.core.types import (
     MESSAGE_CREATED_NAMES,
     PARENT_SESSION,
     QUEUE_AFTER_RESPONSE,
+    LlmRetry,
     ModelSelected,
     QueuedMessage,
     SessionCreated,
@@ -227,6 +228,15 @@ class HarnessApiPlugin:
                             await send_event(event_task.result())
             except WebSocketDisconnect:
                 return
+
+        @app.post("/sessions/{session_id}/llm.retry")
+        async def retry_llm(session_id: str) -> dict[str, Any]:
+            _require_session_event(bus, session_id)
+            event = await bus.append_message(
+                LlmRetry(session_id=session_id),
+                producer="harness-api",
+            )
+            return _dump_bus_payload(event)
 
         @app.get("/sessions/{session_id}/model-selection")
         async def get_session_model_selection(session_id: str) -> dict[str, Any]:
