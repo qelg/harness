@@ -55,6 +55,49 @@ def test_tasks_are_isolated_and_ids_are_allocated_per_session():
     assert state(call(tool, "one", {"actions": [{"type": "add", "name": "third", "state": "todo"}]}))["tasks"][-1]["id"] == 2
 
 
+def test_task_links_are_optional_and_can_be_updated():
+    tool = TasksTool()
+
+    result = call(
+        tool,
+        "one",
+        {
+            "actions": [
+                {
+                    "type": "add",
+                    "name": "wait for pull request",
+                    "link": "https://github.com/qelg/harness/pull/1",
+                    "state": "in_progress",
+                }
+            ]
+        },
+    )
+    assert state(result)["tasks"] == [
+        {
+            "id": 0,
+            "name": "wait for pull request",
+            "link": "https://github.com/qelg/harness/pull/1",
+            "state": "in_progress",
+        }
+    ]
+
+    result = call(
+        tool,
+        "one",
+        {
+            "actions": [
+                {
+                    "type": "update",
+                    "id": 0,
+                    "link": "https://github.com/qelg/harness/pull/1#checks",
+                    "state": "in_progress",
+                }
+            ]
+        },
+    )
+    assert state(result)["tasks"][0]["link"].endswith("#checks")
+
+
 def test_no_actions_returns_current_state():
     tool = TasksTool()
     assert state(call(tool, "one", {})) == {
@@ -72,6 +115,8 @@ def test_no_actions_returns_current_state():
         {"type": "update", "state": "todo"},
         {"type": "remove", "id": 0},
         {"type": "add", "name": "x", "state": "bad"},
+        {"type": "add", "name": "x", "link": "", "state": "todo"},
+        {"type": "add", "name": "x", "link": 42, "state": "todo"},
     ],
 )
 def test_invalid_actions_are_rejected(action):

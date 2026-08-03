@@ -67,7 +67,12 @@ def test_task_result_is_projected_into_running_and_finished_session_states(tmp_p
     result = {
         "tasks": [
             {"id": 0, "name": "done", "state": "finished"},
-            {"id": 1, "name": "working", "state": "in_progress"},
+            {
+                "id": 1,
+                "name": "working",
+                "link": "https://github.com/qelg/harness/pull/1",
+                "state": "in_progress",
+            },
             {"id": 2, "name": "later", "state": "todo"},
         ],
         "total": 3,
@@ -91,6 +96,7 @@ def test_task_result_is_projected_into_running_and_finished_session_states(tmp_p
     running = _state_events(bus)[0]
     assert running.tags["state"] == "running"
     assert running.payload["tasks"] == result["tasks"]
+    assert running.payload["tasks"][1]["link"] == "https://github.com/qelg/harness/pull/1"
     assert running.payload["total"] == 3
     assert running.payload["finished"] == 1
     assert running.payload["in_progress"] == 1
