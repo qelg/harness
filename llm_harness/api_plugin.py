@@ -36,7 +36,11 @@ from llm_harness.plugins import Registry
 MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset(
     {"llm.run.failed", QueuedMessage.name, ToolCallRequested.name, SecretAsk.name}
 )
-MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta", SessionStateChanged.name})
+MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({
+    "llm.delta",
+    SessionRenamed.name,
+    SessionStateChanged.name,
+})
 SESSION_OVERVIEW_NAMES = frozenset({
     SessionCreated.name,
     SessionRenamed.name,
