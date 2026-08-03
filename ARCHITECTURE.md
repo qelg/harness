@@ -84,7 +84,10 @@ API-Plugins koennen beim Start eigene Routen und eigene Tabellen installieren. D
 `after_tool` oder `after_response`. Dann schreibt die API statt einer sofortigen
 User-Message ein `queued.message`. Der Tool-Result-Requester emittiert
 `after_tool`-Nachrichten, sobald die Tool-Ergebnisse vollstaendig sind und
-unmittelbar bevor er sonst den naechsten LLM-Request schreiben wuerde. Das
+unmittelbar bevor er sonst den naechsten LLM-Request schreiben wuerde. Wenn
+die Antwort ohne weiteren Tool-Aufruf endet, uebernimmt das Session-State-
+Plugin diese Queue-Eintraege am finalen Ergebnis und plant ebenfalls den
+Folge-Request. Das
 Session-State-Plugin emittiert `after_response`-Nachrichten an einer finalen
 Assistant-Antwort (oder einem terminalen Run-Fehler) statt eines
 `finished`-Events. Ein atomarer Drain schreibt alle bis zu dieser Grenze

@@ -71,9 +71,11 @@ curl -X POST http://127.0.0.1:8000/sessions/1/tools/terminal \
 ```
 
 Nachrichten koennen ausserdem als persistente `queued.message`-Events fuer eine
-laufende Session vorgemerkt werden. `after_tool` fuegt alle bis zum naechsten
-Tool-Ergebnis vorgemerkten Nachrichten ein; bei parallelen Tools wartet der
-folgende LLM-Request weiterhin auf alle Ergebnisse. `after_response` fuegt sie
+laufende Session vorgemerkt werden. `after_tool` fuegt die Nachrichten vor dem
+Folge-Request nach den Tool-Ergebnissen ein; bei parallelen Tools wartet der
+folgende LLM-Request weiterhin auf alle Ergebnisse. Endet die Antwort ohne
+weiteren Tool-Aufruf, uebernimmt das Session-State-Plugin die noch offenen
+`after_tool`-Nachrichten und plant ebenfalls den Folge-Request. `after_response` fuegt sie
 nach der naechsten finalen Antwort
 ein; in diesem Fall schreibt das Session-State-Plugin keinen kurzzeitigen
 `finished`-Uebergang. Ohne `queue_mode` bleibt das bisherige sofortige Verhalten

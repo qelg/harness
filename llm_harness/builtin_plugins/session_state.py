@@ -13,9 +13,10 @@ from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import (
     AssistantMessageCreated,
     LlmRunFailed,
+    QUEUE_AFTER_RESPONSE,
+    QUEUE_AFTER_TOOL,
     SecretAsk,
     ToolMessageCreated,
-    QUEUE_AFTER_RESPONSE,
     SessionStateChanged,
     UserMessageCreated,
 )
@@ -76,12 +77,7 @@ class SessionStatePlugin(EventConsumer):
             read = None
             outcome = None
         elif event.name == LlmRunFailed.name:
-            queued = pending_queued_messages(
-                bus,
-                session_id=event.tags["session"],
-                mode=QUEUE_AFTER_RESPONSE,
-                after_latest_request=False,
-            )
+            queued = _pending_follow_up_messages(bus, event.tags["session"])
             if queued:
                 await bus.append_batch(
                     queued_delivery_events(
@@ -104,12 +100,7 @@ class SessionStatePlugin(EventConsumer):
             # a finished state while its backoff timer is running.
             return
         else:
-            queued = pending_queued_messages(
-                bus,
-                session_id=event.tags["session"],
-                mode=QUEUE_AFTER_RESPONSE,
-                after_latest_request=False,
-            )
+            queued = _pending_follow_up_messages(bus, event.tags["session"])
             if queued:
                 await bus.append_batch(
                     queued_delivery_events(
@@ -147,6 +138,34 @@ class SessionStatePlugin(EventConsumer):
             ),
             limit=1,
         ))
+
+
+def _pending_follow_up_messages(
+    bus: EventBus, session_id: str
+) -> list[EventRecord]:
+    """Return all queued input that can continue after a terminal run.
+
+    An ``after_tool`` command normally gets released by the tool-result
+    requester. If the model finishes without producing another tool call, that
+    requester is never invoked, so the session-state fallback must release it
+    here as well. Do not apply the latest-request lower boundary at this
+    fallback: both queue modes are explicitly still unsent.
+    """
+    queued = [
+        *pending_queued_messages(
+            bus,
+            session_id=session_id,
+            mode=QUEUE_AFTER_RESPONSE,
+            after_latest_request=False,
+        ),
+        *pending_queued_messages(
+            bus,
+            session_id=session_id,
+            mode=QUEUE_AFTER_TOOL,
+            after_latest_request=False,
+        ),
+    ]
+    return sorted(queued, key=lambda event: event.id)
 
 
 def _contains_tool_call(content: Any) -> bool:
