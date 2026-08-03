@@ -13,6 +13,8 @@ from llm_harness.core.events import EventBus, EventFilter, EventRecord
 from llm_harness.core.types import (
     AssistantMessageCreated,
     LlmRunFailed,
+    SecretAsk,
+    ToolMessageCreated,
     QUEUE_AFTER_RESPONSE,
     SessionStateChanged,
     UserMessageCreated,
@@ -26,7 +28,13 @@ class SessionStatePlugin(EventConsumer):
     subscriber = "plugin:session-state"
     event_filter = EventFilter(
         names=frozenset(
-            {UserMessageCreated.name, AssistantMessageCreated.name, LlmRunFailed.name}
+            {
+                UserMessageCreated.name,
+                AssistantMessageCreated.name,
+                LlmRunFailed.name,
+                SecretAsk.name,
+                ToolMessageCreated.name,
+            }
         )
     )
 
@@ -45,6 +53,8 @@ class SessionStatePlugin(EventConsumer):
     async def _process_event_locked(
         self, bus: EventBus, event: EventRecord
     ) -> None:
+        if event.name == ToolMessageCreated.name and event.tags.get("tool") != "retrieve-secret":
+            return
         if self._already_projected(bus, event) or trigger_already_delivered_queue(
             bus,
             session_id=event.tags["session"],
@@ -54,6 +64,14 @@ class SessionStatePlugin(EventConsumer):
             return
 
         if event.name == UserMessageCreated.name:
+            state = "running"
+            read = None
+            outcome = None
+        elif event.name == SecretAsk.name:
+            state = "secret.ask"
+            read = None
+            outcome = None
+        elif event.name == ToolMessageCreated.name and event.tags.get("tool") == "retrieve-secret":
             state = "running"
             read = None
             outcome = None

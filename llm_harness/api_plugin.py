@@ -25,6 +25,7 @@ from llm_harness.core.types import (
     SessionCreated,
     SessionRenamed,
     SessionStateChanged,
+    SecretAsk,
     ToolCallRequested,
     UserMessageCreated,
     new_run_id,
@@ -33,7 +34,7 @@ from llm_harness.core.types import (
 from llm_harness.plugins import Registry
 
 MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset(
-    {"llm.run.failed", QueuedMessage.name, ToolCallRequested.name}
+    {"llm.run.failed", QueuedMessage.name, ToolCallRequested.name, SecretAsk.name}
 )
 MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta", SessionStateChanged.name})
 
@@ -606,6 +607,24 @@ def _message_from_event(event: BusEvent) -> dict[str, Any]:
             "tool": event.payload.get("tool"),
             "run_id": event.payload.get("run_id"),
             "metadata": {},
+            "queue_mode": None,
+            "event_name": event.name,
+            "created_at_ms": event.created_at_ms,
+        }
+    if event.name == SecretAsk.name:
+        return {
+            "id": event.id,
+            "session_id": event.tags["session"],
+            "role": "tool_request",
+            "content": event.payload.get("description", ""),
+            "provider": None,
+            "model": None,
+            "tool": "retrieve-secret",
+            "run_id": event.payload.get("run_id"),
+            "metadata": {
+                "identifier": event.payload.get("identifier"),
+                "container": event.payload.get("container"),
+            },
             "queue_mode": None,
             "event_name": event.name,
             "created_at_ms": event.created_at_ms,

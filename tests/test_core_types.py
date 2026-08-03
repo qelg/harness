@@ -168,3 +168,11 @@ def test_queued_message_is_a_validated_session_command():
 
     with pytest.raises(ValueError, match="invalid queued message mode"):
         QueuedMessage(session_id="sess_1", content="no", mode="later")
+
+
+def test_secret_ask_session_state_has_no_read_marker():
+    from llm_harness.core.types import SessionStateChanged
+
+    state = SessionStateChanged("sess_1", "secret.ask", source_event_id=1)
+    assert state.tags()["state"] == "secret.ask"
+    assert state.payload() == {"source_event_id": 1}

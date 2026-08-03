@@ -4,6 +4,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -19,6 +20,7 @@ from llm_harness.builtin_plugins.unifiedpush import (
 from llm_harness.core.events import EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
+    SecretAsk,
     SessionCreated,
     SessionRenamed,
     SessionStateChanged,
@@ -117,6 +119,7 @@ def test_finished_top_level_session_sends_title_message_and_session_id(tmp_path)
     asyncio.run(client.aclose())
 
     assert len(requests) == 1
+    assert requests[0].headers["Content-Encoding"] == "aes128gcm"
     envelope = json.loads(requests[0].content)
     assert envelope["version"] == PUSH_CRYPTO_VERSION
     ephemeral = serialization.load_der_public_key(_b64decode(envelope["ephemeral_public_key"]))
@@ -133,6 +136,39 @@ def test_finished_top_level_session_sends_title_message_and_session_id(tmp_path)
         "content": "The release is ready.",
         "event_id": state.id,
     }
+
+
+def test_failed_delivery_logs_response_body(tmp_path, caplog):
+    bus = EventService(tmp_path / "events.db")
+    asyncio.run(bus.append_message(SessionCreated("sess_1", "Initial")))
+    answer = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated("sess_1", "done", "mock", "model", "run")
+        )
+    )
+    finished = asyncio.run(
+        bus.append_message(SessionStateChanged("sess_1", "finished", answer.id, read="unread"))
+    )
+    UnifiedPushPlugin._init_schema(bus)
+    _, key = public_key()
+    bus.conn.execute(
+        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?, ?)",
+        ("phone", "https://push.example.test/token", key, 1),
+    )
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="Mozilla rejected the push payload")
+
+    caplog.set_level("WARNING")
+    client = httpx.AsyncClient(transport=httpx.MockTransport(reject))
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(UnifiedPushPlugin(client=client).process_event(bus, finished))
+    finally:
+        asyncio.run(client.aclose())
+
+    assert "HTTP 400" in caplog.text
+    assert "Mozilla rejected the push payload" in caplog.text
 
 
 def test_child_and_repeated_finished_states_do_not_notify(tmp_path):
@@ -163,3 +199,60 @@ def test_child_and_repeated_finished_states_do_not_notify(tmp_path):
     client = httpx.AsyncClient(transport=httpx.MockTransport(fail_if_called))
     asyncio.run(UnifiedPushPlugin(client=client).process_event(bus, finished))
     asyncio.run(client.aclose())
+
+
+def test_secret_ask_state_sends_description_notification(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_1", title="Deploy")))
+    running = asyncio.run(
+        bus.append_message(SessionStateChanged("sess_1", "running", source_event_id=1))
+    )
+    ask = asyncio.run(
+        bus.append_message(
+            SecretAsk(
+                session_id="sess_1",
+                description="GitHub token for the release upload",
+                identifier="secret_identifier_1234",
+                container="llm-harness-session-sess_1",
+                run_id="tool_1",
+            )
+        )
+    )
+    state = asyncio.run(
+        bus.append_message(
+            SessionStateChanged("sess_1", "secret.ask", source_event_id=ask.id)
+        )
+    )
+    UnifiedPushPlugin._init_schema(bus)
+    private, key = public_key()
+    bus.conn.execute(
+        "INSERT INTO unifiedpush_subscriptions VALUES (?, ?, ?, ?)",
+        ("phone", "https://push.example.test/token", key, 1),
+    )
+    requests = []
+
+    def send(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(201)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(send))
+    asyncio.run(UnifiedPushPlugin(client=client).process_event(bus, state))
+    asyncio.run(client.aclose())
+
+    assert len(requests) == 1
+    envelope = json.loads(requests[0].content)
+    ephemeral = serialization.load_der_public_key(_b64decode(envelope["ephemeral_public_key"]))
+    shared_secret = private.exchange(ec.ECDH(), ephemeral)
+    key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"harness-unifiedpush-v1").derive(shared_secret)
+    assert json.loads(
+        AESGCM(key).decrypt(
+            _b64decode(envelope["nonce"]), _b64decode(envelope["ciphertext"]), b"phone"
+        )
+    ) == {
+        "type": "session.secret.ask",
+        "session_id": "sess_1",
+        "title": "Deploy",
+        "content": "GitHub token for the release upload",
+        "event_id": state.id,
+    }
+    assert running.id < state.id

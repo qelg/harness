@@ -13,6 +13,7 @@ ROLE = "role"
 PROVIDER = "provider"
 MODEL = "model"
 TOOL = "tool"
+CONTAINER = "container"
 TOOLSET = "toolset"
 RUN = "run"
 STATE = "state"
@@ -148,14 +149,14 @@ class SessionStateChanged:
     name: str = "session.state"
 
     def __post_init__(self) -> None:
-        if self.state not in {"running", "finished"}:
+        if self.state not in {"running", "secret.ask", "finished"}:
             raise ValueError(f"invalid session state: {self.state}")
         if self.read is not None and self.read not in {"unread", "read"}:
             raise ValueError(f"invalid session read state: {self.read}")
         if self.state == "finished" and self.read is None:
             raise ValueError("finished session states require a read tag")
-        if self.state == "running" and self.read is not None:
-            raise ValueError("running session states cannot have a read tag")
+        if self.state != "finished" and self.read is not None:
+            raise ValueError(f"{self.state} session states cannot have a read tag")
 
     def payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"source_event_id": self.source_event_id}
@@ -454,6 +455,36 @@ class ToolCallRequested:
         return {SESSION: self.session_id, CHAT: self.session_id, TOOL: self.tool, RUN: self.run_id}
 
 
+@dataclass(frozen=True)
+class SecretAsk:
+    """A request for a secret, deliberately containing no secret value."""
+
+    session_id: str
+    description: str
+    identifier: str
+    container: str
+    run_id: str
+
+    name: str = "secret.ask"
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "description": self.description,
+            "identifier": self.identifier,
+            "container": self.container,
+            "run_id": self.run_id,
+        }
+
+    def tags(self) -> dict[str, str]:
+        return {
+            SESSION: self.session_id,
+            CHAT: self.session_id,
+            TOOL: "retrieve-secret",
+            RUN: self.run_id,
+            CONTAINER: self.container,
+        }
+
+
 REQUIRED_TAGS: dict[str, frozenset[str]] = {
     SessionCreated.name: frozenset({SESSION}),
     SessionRenamed.name: frozenset({SESSION, NAMER}),
@@ -469,6 +500,7 @@ REQUIRED_TAGS: dict[str, frozenset[str]] = {
     LlmRunFailed.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     ToolMessageCreated.name: frozenset({SESSION, TOOL, RUN}),
     ToolCallRequested.name: frozenset({SESSION, TOOL, RUN}),
+    SecretAsk.name: frozenset({SESSION, TOOL, RUN, CONTAINER}),
 }
 
 MESSAGE_CREATED_NAMES = frozenset(
