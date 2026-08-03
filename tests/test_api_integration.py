@@ -764,3 +764,26 @@ def test_websocket_unsubscribe_stops_event_type_replay(tmp_path, monkeypatch):
         response = socket.receive_json()
         assert response["type"] == "subscribed"
         assert response["event_types"] == []
+
+
+def test_websocket_includes_message_projection_for_message_events(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    session = client.post("/sessions", json={"title": "chat"}).json()
+    message = client.post(
+        f"/sessions/{session['id']}/messages", json={"content": "hello"}
+    ).json()
+
+    with client.websocket_connect("/events") as socket:
+        socket.send_json(
+            {
+                "type": "subscribe",
+                "event_types": ["chat.message.user.created"],
+                "since_id": message["id"] - 1,
+            }
+        )
+        frame = socket.receive_json()
+        assert frame["event"]["name"] == "chat.message.user.created"
+        assert frame["message"] == message
+        assert socket.receive_json()["type"] == "subscribed"
