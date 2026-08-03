@@ -139,7 +139,8 @@ class HarnessApiPlugin:
                     "FROM projected_sessions WHERE parent_session_id IS NULL ORDER BY created_event_id"
                 ).fetchall()
                 state_rows = bus.conn.execute(
-                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, "
+                    "tasks_json, tasks_total, tasks_finished, tasks_in_progress, event_id, created_at_ms "
                     "FROM projected_session_states"
                 ).fetchall()
                 states = {
@@ -633,7 +634,8 @@ def _session_from_event_id(bus: EventBus, session_id: str) -> dict[str, Any] | N
         if row is None:
             return None
         state_row = bus.conn.execute(
-            "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+            "SELECT session_id, state, read_state, archived, source_event_id, outcome, "
+                    "tasks_json, tasks_total, tasks_finished, tasks_in_progress, event_id, created_at_ms "
             "FROM projected_session_states WHERE session_id = ?",
             (session_id,),
         ).fetchone()
