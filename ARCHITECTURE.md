@@ -91,8 +91,9 @@ Assistant-Antwort (oder einem terminalen Run-Fehler) statt eines
 vorhandenen Queue-Eintraege in Reihenfolge als User-Messages; nur die letzte
 fordert den gemeinsamen LLM-Run an. Causation verweist von jeder emittierten
 User-Message auf ihr `queued.message`-Event. Beruecksichtigt werden ungesendete
-Queue-Eintraege nach dem letzten `llm.run.requested`, die vor der naechsten
-Requester- beziehungsweise Session-State-Entscheidung angenommen wurden.
+`after_tool`-Eintraege nach dem letzten `llm.run.requested`; `after_response`-
+Eintraege bleiben auch ueber einen zwischenzeitlichen Tool-Follow-up-Request
+hinweg vorgemerkt und werden bei der naechsten finalen Antwort ausgeliefert.
 
 ### Events streamen
 

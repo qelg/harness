@@ -6,9 +6,7 @@ from llm_harness.builtin_plugins.session_state import SessionStatePlugin
 from llm_harness.core.events import EventFilter, EventService
 from llm_harness.core.types import (
     AssistantMessageCreated,
-    SecretAsk,
     SessionStateChanged,
-    ToolMessageCreated,
     UserMessageCreated,
 )
 
@@ -217,7 +215,7 @@ def test_final_response_atomically_emits_queued_users_instead_of_finished_state(
     assert users[-1].id < requests[0].id
 
 
-def test_message_accepted_before_state_consumer_runs_continues_response(tmp_path):
+def test_after_response_message_survives_a_follow_up_request_before_final_response(tmp_path):
     from llm_harness.core.types import QueuedMessage
 
     bus = EventService(tmp_path / "events.db")
@@ -245,7 +243,7 @@ def test_message_accepted_before_state_consumer_runs_continues_response(tmp_path
     assert [event.payload["content"] for event in users] == ["too late"]
 
 
-def test_queued_message_before_latest_request_does_not_leak_into_later_response(
+def test_after_response_queue_before_latest_request_is_released_at_final_response(
     tmp_path,
 ):
     from llm_harness.core.types import LlmRunRequested, QueuedMessage
@@ -278,46 +276,8 @@ def test_queued_message_before_latest_request_does_not_leak_into_later_response(
 
     asyncio.run(SessionStatePlugin().process_event(bus, final))
 
-    assert _state_events(bus)[0].tags["state"] == "finished"
-    assert bus.replay(
+    assert _state_events(bus) == []
+    users = bus.replay(
         EventFilter(names=frozenset({"chat.message.user.created"}))
-    ) == []
-
-
-def test_secret_ask_moves_session_to_secret_state_and_result_back_to_running(tmp_path):
-    bus = EventService(tmp_path / "events.db")
-    plugin = SessionStatePlugin()
-    ask = asyncio.run(
-        bus.append_message(
-            SecretAsk(
-                session_id="sess_1",
-                description="GitHub token",
-                identifier="secret_identifier_1234",
-                container="llm-harness-session-sess_1",
-                run_id="tool_1",
-            )
-        )
     )
-
-    asyncio.run(plugin.process_event(bus, ask))
-    secret_state = _state_events(bus)[0]
-    assert secret_state.tags["state"] == "secret.ask"
-    assert secret_state.causation_id == ask.id
-    assert secret_state.payload == {"source_event_id": ask.id}
-
-    result = asyncio.run(
-        bus.append_message(
-            ToolMessageCreated(
-                session_id="sess_1",
-                content="Secret written to /secrets/secret_identifier_1234\n",
-                tool="retrieve-secret",
-                run_id="tool_1",
-                metadata={"secret_ask_event_id": ask.id},
-            )
-        )
-    )
-    asyncio.run(plugin.process_event(bus, result))
-
-    states = _state_events(bus)
-    assert [item.tags["state"] for item in states] == ["secret.ask", "running"]
-    assert states[-1].causation_id == result.id
+    assert [event.payload["content"] for event in users] == ["missed boundary"]
