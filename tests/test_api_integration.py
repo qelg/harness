@@ -5,7 +5,14 @@ import asyncio
 from fastapi.testclient import TestClient
 
 from llm_harness.api import create_app
-from llm_harness.core.types import LlmRunFailed, SessionCreated, ToolCallRequested
+from llm_harness.core.types import (
+    AssistantMessageCreated,
+    LlmRunFailed,
+    SessionCreated,
+    SessionRenamed,
+    ToolCallRequested,
+    UserMessageCreated,
+)
 
 
 def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatch):
@@ -20,12 +27,60 @@ def test_api_creates_session_and_lists_sessions_from_events(tmp_path, monkeypatc
 
     sessions_response = client.get("/sessions")
     assert sessions_response.status_code == 200
-    assert sessions_response.json() == [session]
+    assert sessions_response.json() == [{**session, "session_state": None}]
+    assert int(sessions_response.headers["X-Harness-Event-Cursor"]) >= session["event_id"]
 
     restarted_client = TestClient(create_app())
     restarted_response = restarted_client.get("/sessions")
     assert restarted_response.status_code == 200
-    assert restarted_response.json() == [session]
+    assert restarted_response.json() == [{**session, "session_state": None}]
+
+
+def test_sessions_include_latest_state_and_incremental_overview_updates(tmp_path, monkeypatch):
+    from llm_harness.builtin_plugins.session_state import SessionStatePlugin
+
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    app = create_app()
+    client = TestClient(app)
+    plugin = SessionStatePlugin()
+    session_id = client.post("/sessions", json={"title": "initial"}).json()["id"]
+
+    user = asyncio.run(
+        app.state.bus.append_message(UserMessageCreated(session_id, "hello"))
+    )
+    asyncio.run(plugin.process_event(app.state.bus, user))
+    answer = asyncio.run(
+        app.state.bus.append_message(
+            AssistantMessageCreated(
+                session_id,
+                "done",
+                "mock-llm",
+                "test-model",
+                "run-1",
+                metadata={"provider_response": {"finish_reason": "stop"}},
+            )
+        )
+    )
+    asyncio.run(plugin.process_event(app.state.bus, answer))
+
+    snapshot = client.get("/sessions").json()
+    assert snapshot[0]["session_state"]["state"] == "finished"
+    assert snapshot[0]["session_state"]["read"] == "unread"
+
+    renamed = asyncio.run(
+        app.state.bus.append_message(
+            SessionRenamed(session_id, "renamed", "namer-session"),
+            producer="test",
+        )
+    )
+    updates = client.get("/sessions/updates", params={"since_id": answer.id}).json()
+    assert updates["updates"][-1]["event_id"] == renamed.id
+    assert updates["updates"][-1]["event_name"] == "session.renamed"
+    assert updates["updates"][-1]["session"]["title"] == "renamed"
+    assert updates["updates"][-1]["session"]["session_state"]["state"] == "finished"
+    assert updates["next_since_id"] >= renamed.id
+    assert updates["has_more"] is False
+
 
 
 def test_api_hides_derived_sessions_from_top_level_list(tmp_path, monkeypatch):
@@ -47,7 +102,7 @@ def test_api_hides_derived_sessions_from_top_level_list(tmp_path, monkeypatch):
     response = client.get("/sessions")
 
     assert response.status_code == 200
-    assert response.json() == [parent]
+    assert response.json() == [{**parent, "session_state": None}]
 
 
 def test_api_lists_direct_child_sessions(tmp_path, monkeypatch):

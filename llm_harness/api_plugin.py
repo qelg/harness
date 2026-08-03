@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,11 @@ MESSAGE_TIMELINE_NAMES = MESSAGE_CREATED_NAMES | frozenset(
     {"llm.run.failed", QueuedMessage.name, ToolCallRequested.name, SecretAsk.name}
 )
 MESSAGE_UPDATE_NAMES = MESSAGE_TIMELINE_NAMES | frozenset({"llm.delta", SessionStateChanged.name})
+SESSION_OVERVIEW_NAMES = frozenset({
+    SessionCreated.name,
+    SessionRenamed.name,
+    SessionStateChanged.name,
+})
 
 
 class CreateSessionRequest(BaseModel):
@@ -121,24 +126,78 @@ class HarnessApiPlugin:
             return _session_from_events(bus, event)
 
         @app.get("/sessions")
-        async def list_sessions(tag: str | None = None) -> list[dict[str, Any]]:
+        async def list_sessions(
+            response: Response, tag: str | None = None
+        ) -> list[dict[str, Any]]:
+            # Capture the cursor before reading the snapshot. Events committed after
+            # this point are deliberately left for the incremental endpoint.
+            snapshot_cursor = bus.last_event_id
+            response.headers["X-Harness-Event-Cursor"] = str(snapshot_cursor)
             if bus.projections_ready:
                 rows = bus.conn.execute(
                     "SELECT session_id, parent_session_id, title, tags_json, created_event_id, created_at_ms "
                     "FROM projected_sessions WHERE parent_session_id IS NULL ORDER BY created_event_id"
                 ).fetchall()
-                sessions = [_session_from_projection_row(row) for row in rows]
+                state_rows = bus.conn.execute(
+                    "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+                    "FROM projected_session_states"
+                ).fetchall()
+                states = {
+                    row["session_id"]: _session_state_from_projection_row(row)
+                    for row in state_rows
+                }
+                sessions = [
+                    _with_session_state(
+                        _session_from_projection_row(row),
+                        states.get(row["session_id"]),
+                    )
+                    for row in rows
+                ]
                 if tag is None:
                     return sessions
                 return [session for session in sessions if tag in session["tags"]]
             sessions = [
-                _session_from_events(bus, event)
+                _with_session_state(
+                    _session_from_events(bus, event),
+                    _latest_session_state(bus, event.tags["session"]),
+                )
                 for event in bus.replay(EventFilter(names=frozenset({SessionCreated.name})))
                 if "parent_session" not in event.tags
             ]
             if tag is None:
                 return sessions
             return [session for session in sessions if tag in session["tags"]]
+
+        @app.get("/sessions/updates")
+        async def list_session_updates(since_id: int = 0) -> dict[str, Any]:
+            """Return top-level session changes after an event cursor.
+
+            Each returned update contains the current complete session projection,
+            so clients can apply updates idempotently even when several events for
+            the same session happened between polls.
+            """
+            high_water = bus.last_event_id
+            events = bus.replay(
+                EventFilter(
+                    since_id=max(0, since_id),
+                    before_id=high_water + 1,
+                    names=SESSION_OVERVIEW_NAMES,
+                ),
+                limit=501,
+            )
+            has_more = len(events) > 500
+            page = events[:500]
+            updates = []
+            for event in page:
+                update = _session_overview_update(bus, event)
+                if update is not None:
+                    updates.append(update)
+            next_since_id = page[-1].id if has_more and page else high_water
+            return {
+                "updates": updates,
+                "next_since_id": next_since_id,
+                "has_more": has_more,
+            }
 
         @app.get("/sessions/{session_id}/children")
         async def list_child_sessions(session_id: str) -> list[dict[str, Any]]:
@@ -524,6 +583,61 @@ def _require_toolsets(registry: Registry, toolsets: list[str]) -> None:
     if unknown:
         raise HTTPException(status_code=400, detail=f"unknown toolset: {', '.join(unknown)}")
 
+
+
+
+def _with_session_state(
+    session: dict[str, Any], state: dict[str, Any] | None
+) -> dict[str, Any]:
+    return {**session, "session_state": state}
+
+
+def _latest_session_state(bus: EventBus, session_id: str) -> dict[str, Any] | None:
+    event = bus.latest(
+        EventFilter(
+            names=frozenset({SessionStateChanged.name}),
+            tags={"session": session_id},
+        )
+    )
+    return _session_state_from_event(event) if event is not None else None
+
+
+def _session_overview_update(
+    bus: EventBus, event: BusEvent
+) -> dict[str, Any] | None:
+    session = _session_from_event_id(bus, event.tags["session"])
+    if session is None or session.get("parent_session_id") is not None:
+        return None
+    return {
+        "event_id": event.id,
+        "event_name": event.name,
+        "session_id": event.tags["session"],
+        "session": session,
+    }
+
+
+def _session_from_event_id(bus: EventBus, session_id: str) -> dict[str, Any] | None:
+    if bus.projections_ready:
+        row = bus.conn.execute(
+            "SELECT session_id, parent_session_id, title, tags_json, created_event_id, created_at_ms "
+            "FROM projected_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        state_row = bus.conn.execute(
+            "SELECT session_id, state, read_state, archived, source_event_id, outcome, event_id, created_at_ms "
+            "FROM projected_session_states WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        state = _session_state_from_projection_row(state_row) if state_row is not None else None
+        return _with_session_state(_session_from_projection_row(row), state)
+    event = bus.latest(
+        EventFilter(names=frozenset({SessionCreated.name}), tags={"session": session_id})
+    )
+    if event is None:
+        return None
+    return _with_session_state(_session_from_events(bus, event), _latest_session_state(bus, session_id))
 
 
 def _session_from_projection_row(row: sqlite3.Row) -> dict[str, Any]:
