@@ -281,3 +281,39 @@ def test_after_response_queue_before_latest_request_is_released_at_final_respons
         EventFilter(names=frozenset({"chat.message.user.created"}))
     )
     assert [event.payload["content"] for event in users] == ["missed boundary"]
+
+
+
+def test_after_tool_queue_is_released_when_final_response_has_no_tool_call(tmp_path):
+    from llm_harness.core.types import LlmRunRequested, QueuedMessage
+
+    bus = EventService(tmp_path / "events.db")
+    queued = asyncio.run(
+        bus.append_message(QueuedMessage("sess_1", "continue in another direction", "after_tool"))
+    )
+    asyncio.run(
+        bus.append_message(
+            LlmRunRequested("sess_1", "mock", "test", "llm_1")
+        )
+    )
+    final = asyncio.run(
+        bus.append_message(
+            AssistantMessageCreated(
+                session_id="sess_1",
+                content="I have finished without calling a tool.",
+                provider="mock",
+                model="test",
+                run_id="llm_1",
+            )
+        )
+    )
+
+    asyncio.run(SessionStatePlugin().process_event(bus, final))
+
+    assert _state_events(bus) == []
+    users = bus.replay(
+        EventFilter(names=frozenset({"chat.message.user.created"}))
+    )
+    assert len(users) == 1
+    assert users[0].payload["content"] == "continue in another direction"
+    assert users[0].causation_id == queued.id
