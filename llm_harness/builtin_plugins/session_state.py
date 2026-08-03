@@ -10,6 +10,7 @@ from llm_harness.builtin_plugins.queued_messages import (
 )
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
+from llm_harness.tools.tasks import task_state_from_result
 from llm_harness.core.types import (
     AssistantMessageCreated,
     LlmRunFailed,
@@ -54,7 +55,10 @@ class SessionStatePlugin(EventConsumer):
     async def _process_event_locked(
         self, bus: EventBus, event: EventRecord
     ) -> None:
-        if event.name == ToolMessageCreated.name and event.tags.get("tool") != "retrieve-secret":
+        if event.name == ToolMessageCreated.name and event.tags.get("tool") not in {
+            "retrieve-secret",
+            "tasks",
+        }:
             return
         if self._already_projected(bus, event) or trigger_already_delivered_queue(
             bus,
@@ -64,6 +68,7 @@ class SessionStatePlugin(EventConsumer):
         ):
             return
 
+        task_state = _task_state_for_event(bus, event)
         if event.name == UserMessageCreated.name:
             state = "running"
             read = None
@@ -72,7 +77,12 @@ class SessionStatePlugin(EventConsumer):
             state = "secret.ask"
             read = None
             outcome = None
-        elif event.name == ToolMessageCreated.name and event.tags.get("tool") == "retrieve-secret":
+        elif event.name == ToolMessageCreated.name and event.tags.get("tool") in {
+            "retrieve-secret",
+            "tasks",
+        }:
+            if event.tags.get("tool") == "tasks" and task_state is None:
+                return
             state = "running"
             read = None
             outcome = None
@@ -122,6 +132,10 @@ class SessionStatePlugin(EventConsumer):
                 source_event_id=event.id,
                 read=read,
                 outcome=outcome,
+                tasks=task_state.get("tasks") if task_state else None,
+                total=task_state.get("total") if task_state else None,
+                finished=task_state.get("finished") if task_state else None,
+                in_progress=task_state.get("in_progress") if task_state else None,
             ),
             producer=self.name,
             causation_id=event.id,
@@ -138,6 +152,28 @@ class SessionStatePlugin(EventConsumer):
             ),
             limit=1,
         ))
+
+
+def _task_state_for_event(
+    bus: EventBus, event: EventRecord
+) -> dict[str, Any] | None:
+    if event.name == ToolMessageCreated.name and event.tags.get("tool") == "tasks":
+        return task_state_from_result(
+            event.payload.get("content"), event.payload.get("metadata")
+        )
+    results = bus.replay(
+        EventFilter(
+            names=frozenset({ToolMessageCreated.name}),
+            tags={"session": event.tags["session"], "tool": "tasks"},
+        )
+    )
+    for result in reversed(results):
+        task_state = task_state_from_result(
+            result.payload.get("content"), result.payload.get("metadata")
+        )
+        if task_state is not None:
+            return task_state
+    return None
 
 
 def _pending_follow_up_messages(

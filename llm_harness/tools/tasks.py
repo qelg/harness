@@ -183,6 +183,54 @@ class TasksToolConsumer(EventConsumer):
             return
 
 
+def task_state_from_result(
+    content: Any, metadata: Any = None
+) -> dict[str, Any] | None:
+    """Return a validated, complete task state from a tool result.
+
+    The task tool includes the complete list in both its textual output and
+    metadata.  Accepting metadata as a fallback lets consumers reconstruct the
+    state without trusting a separately maintained task cache.
+    """
+    candidates: list[Any] = [content, metadata]
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            try:
+                candidate = json.loads(candidate)
+            except (TypeError, json.JSONDecodeError):
+                continue
+        if not isinstance(candidate, dict) or not isinstance(candidate.get("tasks"), list):
+            continue
+        tasks: list[dict[str, Any]] = []
+        valid = True
+        for task in candidate["tasks"]:
+            if not isinstance(task, dict):
+                valid = False
+                break
+            task_id = task.get("id")
+            name = task.get("name")
+            state = task.get("state")
+            if (
+                not isinstance(task_id, int)
+                or isinstance(task_id, bool)
+                or not isinstance(name, str)
+                or not name.strip()
+                or state not in _TASK_STATES
+            ):
+                valid = False
+                break
+            tasks.append({"id": task_id, "name": name, "state": state})
+        if not valid:
+            continue
+        return {
+            "tasks": tasks,
+            "total": len(tasks),
+            "finished": sum(task["state"] == "finished" for task in tasks),
+            "in_progress": sum(task["state"] == "in_progress" for task in tasks),
+        }
+    return None
+
+
 def _validate_actions(actions: Any) -> list[dict[str, Any]]:
     if not isinstance(actions, list):
         raise ValueError("tool input field 'actions' must be a list")
