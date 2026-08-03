@@ -62,6 +62,7 @@ class SessionStatePlugin(EventConsumer):
                 bus,
                 session_id=event.tags["session"],
                 mode=QUEUE_AFTER_RESPONSE,
+                after_latest_request=False,
             )
             if queued:
                 await bus.append_batch(
@@ -89,6 +90,7 @@ class SessionStatePlugin(EventConsumer):
                 bus,
                 session_id=event.tags["session"],
                 mode=QUEUE_AFTER_RESPONSE,
+                after_latest_request=False,
             )
             if queued:
                 await bus.append_batch(

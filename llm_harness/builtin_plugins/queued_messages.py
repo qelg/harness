@@ -25,13 +25,16 @@ def pending_queued_messages(
     *,
     session_id: str,
     mode: str,
+    after_latest_request: bool = True,
 ) -> list[EventRecord]:
-    """Return undelivered queue commands submitted during the current turn.
+    """Return undelivered queue commands for the requested workflow boundary.
 
-    The latest LLM request is the lower boundary. Consumers call this exactly
-    when they would otherwise request the model again or finish the session,
-    so queue commands accepted before that decision are included even when
-    event-consumer processing lagged behind the tool or assistant event.
+    Tool-result requests use the latest LLM request as their lower boundary so
+    an old ``after_tool`` command cannot leak into a later model turn.
+    ``after_response`` commands intentionally do not use that boundary: a
+    response queue may have been accepted while an earlier turn was still
+    completing its tool calls, before the latest follow-up request was written.
+    The next final response must still release that command.
     """
     requests = bus.replay(
         EventFilter(
@@ -39,7 +42,7 @@ def pending_queued_messages(
             tags={"session": session_id},
         )
     )
-    after_id = requests[-1].id if requests else None
+    after_id = requests[-1].id if after_latest_request and requests else None
     queued = bus.replay(
         EventFilter(
             since_id=after_id,

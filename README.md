@@ -85,9 +85,10 @@ curl -X POST http://127.0.0.1:8000/sessions/1/messages \
   -d '{"content":"Beruecksichtige auch die Tests.","queue_mode":"after_tool"}'
 ```
 
-Beruecksichtigt werden ungesendete Queue-Eintraege nach dem letzten
-`llm.run.requested`, die vor der naechsten Requester-Entscheidung angenommen
-wurden. Mehrere Nachrichten werden in Eingabereihenfolge als User-Messages
+Beruecksichtigt werden ungesendete `after_tool`-Eintraege nach dem letzten `llm.run.requested`;
+`after_response`-Eintraege bleiben auch ueber einen zwischenzeitlichen
+Tool-Follow-up-Request hinweg vorgemerkt und werden bei der naechsten finalen
+Antwort ausgeliefert. Mehrere Nachrichten werden in Eingabereihenfolge als User-Messages
 geschrieben und loesen gemeinsam genau einen neuen LLM-Run aus.
 
 ## Subagents

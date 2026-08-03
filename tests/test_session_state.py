@@ -215,7 +215,7 @@ def test_final_response_atomically_emits_queued_users_instead_of_finished_state(
     assert users[-1].id < requests[0].id
 
 
-def test_message_accepted_before_state_consumer_runs_continues_response(tmp_path):
+def test_after_response_message_survives_a_follow_up_request_before_final_response(tmp_path):
     from llm_harness.core.types import QueuedMessage
 
     bus = EventService(tmp_path / "events.db")
@@ -243,7 +243,7 @@ def test_message_accepted_before_state_consumer_runs_continues_response(tmp_path
     assert [event.payload["content"] for event in users] == ["too late"]
 
 
-def test_queued_message_before_latest_request_does_not_leak_into_later_response(
+def test_after_response_queue_before_latest_request_is_released_at_final_response(
     tmp_path,
 ):
     from llm_harness.core.types import LlmRunRequested, QueuedMessage
@@ -276,7 +276,8 @@ def test_queued_message_before_latest_request_does_not_leak_into_later_response(
 
     asyncio.run(SessionStatePlugin().process_event(bus, final))
 
-    assert _state_events(bus)[0].tags["state"] == "finished"
-    assert bus.replay(
+    assert _state_events(bus) == []
+    users = bus.replay(
         EventFilter(names=frozenset({"chat.message.user.created"}))
-    ) == []
+    )
+    assert [event.payload["content"] for event in users] == ["missed boundary"]

@@ -490,6 +490,7 @@ def _response_continues_from_queue(bus: EventBus, event: BusEvent) -> bool:
             bus,
             session_id=session_id,
             mode=QUEUE_AFTER_RESPONSE,
+            after_latest_request=False,
         )
     )
 
