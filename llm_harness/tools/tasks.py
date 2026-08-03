@@ -46,6 +46,11 @@ class TasksTool:
                             "type": "string",
                             "description": "Task name (required when adding a task).",
                         },
+                        "link": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Optional link to further information about the task.",
+                        },
                         "state": {
                             "type": "string",
                             "enum": ["todo", "in_progress", "finished"],
@@ -81,6 +86,8 @@ class TasksTool:
                         "name": action["name"],
                         "state": action["state"],
                     }
+                    if "link" in action:
+                        task["link"] = action["link"]
                     tasks.append(task)
                     next_id += 1
                 elif action["type"] == "remove":
@@ -92,6 +99,8 @@ class TasksTool:
                     task["state"] = action["state"]
                     if "name" in action:
                         task["name"] = action["name"]
+                    if "link" in action:
+                        task["link"] = action["link"]
 
             self._tasks[session_id] = tasks
             self._next_ids[session_id] = next_id
@@ -210,16 +219,21 @@ def task_state_from_result(
             task_id = task.get("id")
             name = task.get("name")
             state = task.get("state")
+            link = task.get("link")
             if (
                 not isinstance(task_id, int)
                 or isinstance(task_id, bool)
                 or not isinstance(name, str)
                 or not name.strip()
                 or state not in _TASK_STATES
+                or (link is not None and (not isinstance(link, str) or not link.strip()))
             ):
                 valid = False
                 break
-            tasks.append({"id": task_id, "name": name, "state": state})
+            normalized_task = {"id": task_id, "name": name, "state": state}
+            if link is not None:
+                normalized_task["link"] = link
+            tasks.append(normalized_task)
         if not valid:
             continue
         return {
@@ -254,6 +268,7 @@ def _validate_actions(actions: Any) -> list[dict[str, Any]]:
                 raise ValueError(f"action {index} requires a non-negative integer id")
         if action_type in {"add", "update"}:
             allowed.add("name")
+            allowed.add("link")
         unexpected = set(action) - allowed
         if unexpected:
             fields = ", ".join(sorted(unexpected))
@@ -266,6 +281,10 @@ def _validate_actions(actions: Any) -> list[dict[str, Any]]:
             name = action["name"]
             if not isinstance(name, str) or not name.strip():
                 raise ValueError(f"action {index} name must be a non-empty string")
+        if "link" in action:
+            link = action["link"]
+            if not isinstance(link, str) or not link.strip():
+                raise ValueError(f"action {index} link must be a non-empty string")
         validated.append(dict(action))
     return validated
 
