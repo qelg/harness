@@ -8,9 +8,21 @@ from llm_harness.builtin_plugins.model_choice import model_choice_for
 from llm_harness.builtin_plugins.queued_messages import QUEUED_MESSAGE_REQUESTS_LLM
 from llm_harness.core.consumer import EventConsumer
 from llm_harness.core.events import EventBus, EventFilter, EventRecord
-from llm_harness.core.types import LlmRetry, LlmRunRequested, SessionCreated, new_run_id
+from llm_harness.core.types import (
+    MESSAGE_CREATED_NAMES,
+    LlmRetry,
+    LlmRunRequested,
+    SecretAsk,
+    SessionCreated,
+    ToolCallRequested,
+    new_run_id,
+)
 
 NO_AUTO_LLM_RUN_SESSION_TAG = "no-auto-llm-run"
+RETRY_BLOCKING_EVENT_NAMES = MESSAGE_CREATED_NAMES | frozenset({
+    ToolCallRequested.name,
+    SecretAsk.name,
+})
 
 
 class LlmRunRequesterPlugin(EventConsumer):
@@ -56,15 +68,29 @@ class LlmRunRequesterPlugin(EventConsumer):
         )
 
     def _retry_follows_failure(self, bus: EventBus, event: EventRecord) -> bool:
-        # A retry is an explicit second initiation, but only immediately after
-        # the failed run. This prevents a stale/manual retry from starting a
-        # second request for an otherwise active conversation.
-        previous = bus.replay(
-            EventFilter(tags={"session": event.tags["session"]}, before_id=event.id),
+        # A retry is an explicit second initiation, but it must still belong to
+        # a failed run. Session metadata changes do not invalidate the retry;
+        # new conversation/tool activity does.
+        failed = bus.replay(
+            EventFilter(
+                names=frozenset({"llm.run.failed"}),
+                tags={"session": event.tags["session"]},
+                before_id=event.id,
+            ),
             limit=1,
             latest=True,
         )
-        return bool(previous and previous[0].name == "llm.run.failed")
+        if not failed:
+            return False
+        return not bus.replay(
+            EventFilter(
+                names=RETRY_BLOCKING_EVENT_NAMES,
+                tags={"session": event.tags["session"]},
+                since_id=failed[0].id,
+                before_id=event.id,
+            ),
+            limit=1,
+        )
 
     def _failed_request_user_message_id(self, bus: EventBus, event: EventRecord) -> int | None:
         failed = bus.replay(

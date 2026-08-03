@@ -4,7 +4,10 @@ import asyncio
 
 from llm_harness.config import Settings
 from llm_harness.core.events import EventFilter, EventService
-from llm_harness.core.types import LlmRetry, LlmRunFailed, ModelSelected, SessionCreated, UserMessageCreated
+from llm_harness.core.types import (
+    LlmRetry, LlmRunFailed, ModelSelected, SessionCreated, SessionRenamed,
+    UserMessageCreated,
+)
 from llm_harness.builtin_plugins.llm_run_requester import LlmRunRequesterPlugin
 
 
@@ -151,3 +154,27 @@ def test_retry_requester_does_not_duplicate_for_same_event(tmp_path, monkeypatch
     assert len(requests) == 1
     assert requests[0].causation_id == retry.id
     assert failed.id < retry.id
+
+
+def test_retry_allows_session_metadata_events_but_not_new_activity(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    bus = EventService(tmp_path / "events.db")
+    plugin = LlmRunRequesterPlugin(settings=Settings.from_env())
+    asyncio.run(bus.append_message(SessionCreated(session_id="sess_1")))
+    failed = asyncio.run(bus.append_message(LlmRunFailed(
+        session_id="sess_1", provider="mock", model="model", run_id="run_1", error="failed"
+    )))
+    asyncio.run(bus.append_message(SessionRenamed("sess_1", "renamed", "sess_1")))
+    retry = asyncio.run(bus.append_message(LlmRetry(session_id="sess_1")))
+    asyncio.run(plugin.process_event(bus, retry))
+    assert len(bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))) == 1
+
+    failed_2 = asyncio.run(bus.append_message(LlmRunFailed(
+        session_id="sess_1", provider="mock", model="model", run_id="run_2", error="failed"
+    )))
+    asyncio.run(bus.append_message(UserMessageCreated(session_id="sess_1", content="new message")))
+    retry_2 = asyncio.run(bus.append_message(LlmRetry(session_id="sess_1")))
+    asyncio.run(plugin.process_event(bus, retry_2))
+    requests = bus.replay(EventFilter(names=frozenset({"llm.run.requested"})))
+    assert len(requests) == 1
+    assert failed.id < retry.id and failed_2.id < retry_2.id
