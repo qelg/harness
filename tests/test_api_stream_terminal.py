@@ -20,6 +20,7 @@ def test_failure_is_terminal():
 
 def test_message_update_stream_includes_session_states():
     assert "session.state" in MESSAGE_UPDATE_NAMES
+    assert "session.renamed" in MESSAGE_UPDATE_NAMES
 
 
 def test_final_response_with_earlier_after_response_queue_is_not_terminal(tmp_path):
