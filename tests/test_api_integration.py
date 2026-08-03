@@ -787,3 +787,26 @@ def test_websocket_includes_message_projection_for_message_events(tmp_path, monk
         assert frame["event"]["name"] == "chat.message.user.created"
         assert frame["message"] == message
         assert socket.receive_json()["type"] == "subscribed"
+
+
+def test_api_creates_llm_retry_event_for_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+    session_id = client.post("/sessions", json={"title": "retry"}).json()["id"]
+
+    response = client.post(f"/sessions/{session_id}/llm.retry")
+
+    assert response.status_code == 200
+    event = response.json()
+    assert event["name"] == "llm.retry"
+    assert event["tags"] == {"session": session_id, "chat": session_id}
+    assert event["payload"] == {}
+
+
+def test_api_rejects_llm_retry_for_unknown_session(tmp_path, monkeypatch):
+    monkeypatch.setenv("HARNESS_EVENTS_DB", str(tmp_path / "events.db"))
+    client = TestClient(create_app())
+
+    response = client.post("/sessions/missing/llm.retry")
+
+    assert response.status_code == 404

@@ -319,6 +319,19 @@ class ModelSelected:
 
 
 @dataclass(frozen=True)
+class LlmRetry:
+    session_id: str
+
+    name: str = "llm.retry"
+
+    def payload(self) -> dict[str, Any]:
+        return {}
+
+    def tags(self) -> dict[str, str]:
+        return {SESSION: self.session_id, CHAT: self.session_id}
+
+
+@dataclass(frozen=True)
 class LlmRunRequested:
     session_id: str
     provider: str
@@ -510,6 +523,7 @@ REQUIRED_TAGS: dict[str, frozenset[str]] = {
     AssistantMessageCreated.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     ModelSelected.name: frozenset({PROVIDER, MODEL}),
     LlmRunRequested.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
+    LlmRetry.name: frozenset({SESSION}),
     LlmRunStarted.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     LlmDelta.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
     LlmRunFailed.name: frozenset({SESSION, PROVIDER, MODEL, RUN}),
