@@ -367,6 +367,28 @@ Session-Projektion sowie `next_since_id` und `has_more`. Clients koennen den
 Cursor nach jedem Polling-Durchlauf speichern und verpasste Aenderungen
 idempotent anwenden.
 
+Fuer Clients mit mehreren Ansichten gibt es zusaetzlich den account-weiten
+WebSocket `GET /events` (mit `ws://` bzw. `wss://`). Er ersetzt Polling fuer
+Session-Uebersichten und mehrere session-bezogene SSE-Verbindungen. Der Client
+muss zuerst abonnieren:
+
+```json
+{"type":"subscribe","event_types":["session.created","session.state","chat.message.assistant.created"],"since_id":123}
+```
+
+Event-Typen koennen spaeter mit `subscribe` erweitert oder mit `unsubscribe`
+entfernt werden. `"*"` abonniert alle Event-Typen. Der Server replayed persistierte
+Events strikt nach dem exklusiven `since_id` und liefert danach Live-Events:
+
+```json
+{"type":"event","cursor":124,"event":{"id":124,"name":"session.state", "...":"..."}}
+```
+
+`cursor` ist nur fuer persistierte Events gesetzt. Transiente Delta-Events werden
+sofort geliefert, duerfen aber keinen Wiederaufnahme-Cursor fortschreiben.
+`heartbeat`-Nachrichten tragen den aktuellen Cursor; nach einer unterbrochenen
+Verbindung kann der Client mit dem letzten persistierten Cursor neu abonnieren.
+
 Die vollstaendige State-Historie einer Session ist ebenfalls verfuegbar. Ein fertiger Zustand kann idempotent als gelesen markiert werden. Eine Session wird durch ein neues `session.state` Event mit `archive=true` archiviert. Das naechste regulaere State-Event, beispielsweise nach einer neuen Nachricht, enthaelt dieses Tag nicht mehr und hebt die Archivierung damit automatisch auf:
 
 ```bash

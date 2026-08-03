@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
-from fastapi import Header, HTTPException, Response
+from fastapi import Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -110,6 +110,113 @@ class HarnessApiPlugin:
                 producer="harness-api",
             )
             return _dump_bus_payload(event)
+
+        @app.websocket("/events")
+        async def stream_all_events(websocket: WebSocket) -> None:
+            """Stream selected event types with a durable, resumable cursor.
+
+            The client sends ``{"type": "subscribe", "event_types": [...],
+            "since_id": N}`` and may later send subscribe/unsubscribe messages.
+            ``since_id`` is exclusive and applies only to durable events; transient
+            events such as ``llm.delta`` are delivered live but never advance the
+            reconnect cursor.
+            """
+            await websocket.accept()
+            subscriptions: set[str] = set()
+            delivered_durable_ids: set[int] = set()
+
+            def matches(event: BusEvent) -> bool:
+                return "*" in subscriptions or event.name in subscriptions
+
+            async def send_event(event: BusEvent) -> None:
+                if not matches(event):
+                    return
+                if event.durable and event.id in delivered_durable_ids:
+                    return
+                if event.durable:
+                    delivered_durable_ids.add(event.id)
+                await websocket.send_json({
+                    "type": "event",
+                    "event": _dump_bus_payload(event),
+                    "cursor": event.id if event.durable else None,
+                })
+
+            async def subscribe(event_types: list[str], since_id: int | None) -> None:
+                nonlocal subscriptions
+                requested = set(_event_types(event_types))
+                subscriptions.update(requested)
+                replay_names = frozenset(requested - {"*"})
+                replay_filter = EventFilter(
+                    since_id=max(0, since_id or 0),
+                    names=replay_names,
+                )
+                if requested:
+                    for event in bus.replay(replay_filter):
+                        await send_event(event)
+                await websocket.send_json({
+                    "type": "subscribed",
+                    "event_types": sorted(subscriptions),
+                    "cursor": bus.last_event_id,
+                })
+
+            try:
+                async with bus.subscribe(EventFilter()) as queue:
+                    initial = await websocket.receive_json()
+                    if initial.get("type") != "subscribe":
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "the first websocket message must subscribe",
+                        })
+                        await websocket.close(code=1008)
+                        return
+                    await subscribe(
+                        _event_types(initial.get("event_types")),
+                        _json_int(initial.get("since_id")),
+                    )
+
+                    while True:
+                        receive_task = asyncio.create_task(websocket.receive_json())
+                        event_task = asyncio.create_task(queue.get())
+                        done, pending = await asyncio.wait(
+                            {receive_task, event_task},
+                            timeout=15,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for task in pending:
+                            task.cancel()
+                        if not done:
+                            await websocket.send_json({
+                                "type": "heartbeat",
+                                "cursor": bus.last_event_id,
+                            })
+                            continue
+                        if receive_task in done:
+                            command = receive_task.result()
+                            command = command if isinstance(command, dict) else {}
+                            command_type = command.get("type")
+                            if command_type == "subscribe":
+                                await subscribe(
+                                    _event_types(command.get("event_types")),
+                                    _json_int(command.get("since_id")),
+                                )
+                            elif command_type == "unsubscribe":
+                                subscriptions.difference_update(
+                                    _event_types(command.get("event_types"))
+                                )
+                                await websocket.send_json({
+                                    "type": "subscribed",
+                                    "event_types": sorted(subscriptions),
+                                    "cursor": bus.last_event_id,
+                                })
+                            else:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": "unknown websocket command",
+                                })
+                        if event_task in done:
+                            await send_event(event_task.result())
+            except WebSocketDisconnect:
+                return
 
         @app.get("/sessions/{session_id}/model-selection")
         async def get_session_model_selection(session_id: str) -> dict[str, Any]:
@@ -915,6 +1022,25 @@ def _model_selection_from_event(event: BusEvent, *, scope: str) -> dict[str, Any
         "event_id": event.id,
         "created_at_ms": event.created_at_ms,
     }
+
+
+def _event_types(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [name for name in value if isinstance(name, str) and name]
+
+
+def _json_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _parse_last_event_id(value: str | None) -> int | None:
