@@ -716,8 +716,15 @@ def test_subagent_state_rejects_non_children_and_reports_failure(tmp_path):
             )
         )
     )
-    with pytest.raises(ValueError, match="direct|children"):
-        asyncio.run(plugin.process_event(bus, request))
+    asyncio.run(plugin.process_event(bus, request))
+    result = bus.replay(
+        EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "bad"})
+    )
+    assert len(result) == 1
+    assert result[0].payload["content"] == (
+        "tool execution failed: ValueError: all session_ids must be subagent children "
+        "of the calling session\n"
+    )
 
     # A real child is created by the normal subagent flow.
     start = asyncio.run(
@@ -767,6 +774,38 @@ def test_subagent_state_rejects_non_children_and_reports_failure(tmp_path):
         "state": "failed",
         "error": "provider unavailable",
     }
+
+
+def test_subagent_state_returns_an_error_for_unknown_session_ids(tmp_path):
+    bus = EventService(tmp_path / "events.db")
+    plugin = SubagentPlugin(tool=SubagentTool())
+    asyncio.run(bus.append_message(SessionCreated(session_id="parent")))
+    request = asyncio.run(
+        bus.append_message(
+            ToolCallRequested(
+                session_id="parent",
+                tool="subagent_state",
+                input={"session_ids": ["does-not-exist"], "wait_for": "all"},
+                run_id="unknown-state",
+            )
+        )
+    )
+
+    asyncio.run(plugin.process_event(bus, request))
+
+    results = bus.replay(
+        EventFilter(names=frozenset({"chat.message.tool.created"}), tags={"run": "unknown-state"})
+    )
+    assert len(results) == 1
+    assert results[0].payload["content"] == (
+        "tool execution failed: ValueError: unknown subagent session id: does-not-exist\n"
+    )
+    assert results[0].payload["metadata"] == {
+        "success": False,
+        "error_type": "ValueError",
+        "error": "unknown subagent session id: does-not-exist",
+    }
+    assert results[0].causation_id == request.id
 
 
 def test_subagent_state_schema_and_runtime_reject_whitespace_and_duplicate_ids():
